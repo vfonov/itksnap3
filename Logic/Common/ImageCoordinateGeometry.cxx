@@ -227,7 +227,8 @@ ImageCoordinateGeometry
 ::ConvertDirectionMatrixToClosestRAICode(DirectionMatrix mat)
 {
   // RAI codes for cardinal directions
-  const static std::string rai_start("RAI"), rai_end("LPS");
+  //const static std::string rai_start("RAI"), rai_end("LPS"); //ORIGINAL
+  const static std::string rai_start("LPI"), rai_end("RAS"); //MINC-specific, TODO: figure out how to do it based on input file type
   std::string rai_out("...");
 
   for(size_t i = 0; i < 3; i++)
