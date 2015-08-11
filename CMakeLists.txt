@@ -75,12 +75,16 @@ include(GetGitRevisionDescription)
 get_git_head_revision(GIT_REFSPEC SNAP_VERSION_GIT_SHA1)
 
 # Get the current git branch
+if(NOT GIT_FOUND)
+  find_package(Git QUIET)
+endif()
 execute_process(
-  COMMAND git rev-parse --abbrev-ref HEAD
+  COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   OUTPUT_VARIABLE SNAP_VERSION_GIT_BRANCH
   OUTPUT_STRIP_TRAILING_WHITESPACE
 )
+MESSAGE(STATUS "   GIT EXE ${GIT_EXECUTABLE} BRANCH ${SNAP_VERSION_GIT_BRANCH}")
 
 #--------------------------------------------------------------------------------
 # FIND PACKAGES IF BUILDING OUTSIDE INSIGHTAPPLICATIONS 
