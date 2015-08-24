@@ -7,6 +7,7 @@
 #include <QStringList>
 #include <QThread>
 #include <QVariant>
+#include <QModelIndex>
 
 class MainImageWindow;
 class GlobalUIModel;
@@ -14,6 +15,14 @@ class QJSEngine;
 class QQmlEngine;
 class QTimer;
 class QStringList;
+
+#if QT_VERSION >= 0x050000
+  class QJSEngine;
+#else
+  class QScriptEngine;
+  #define QJSEngine QScriptEngine
+#endif
+
 
 
 class TestWorker : public QThread
@@ -94,6 +103,9 @@ public slots:
   void postMouseEvent(QObject *widget, double rel_x, double rel_y, QString eventType, QString button);
 
   void postKeyEvent(QObject *object, QString key);
+
+  void sleep(int milli_sec);
+
 protected:
 
   ReturnCode ListTests();

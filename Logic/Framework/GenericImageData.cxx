@@ -53,6 +53,7 @@
 #include "Rebroadcaster.h"
 #include "LayerIterator.h"
 #include "GuidedNativeImageIO.h"
+#include "ImageAnnotationData.h"
 
 // System includes
 #include <fstream>
@@ -86,6 +87,9 @@ GenericImageData
   // Add to the relevant lists
   m_Wrappers[MAIN_ROLE].push_back(m_MainImageWrapper);
   m_Wrappers[LABEL_ROLE].push_back(m_LabelWrapper.GetPointer());
+
+  // Create empty annotations
+  m_Annotations = ImageAnnotationData::New();
 }
 
 GenericImageData
@@ -236,6 +240,9 @@ GenericImageData
   // Reset the label wrapper
   RemoveSingleImageWrapper(LABEL_ROLE);
   m_LabelWrapper = NULL;
+
+  // Clear the annotations
+  m_Annotations->Reset();
 }
 
 void
@@ -274,7 +281,7 @@ GenericImageData
 
   // Pass the image to a Grey image wrapper
   overlay->SetAlpha(0.5);
-  overlay->SetDefaultNickname("Overlay Image");
+  overlay->SetDefaultNickname("Additional Image");
 
   // Sync up spacing between the main and overlay image
   if(checkSpace)
@@ -512,3 +519,9 @@ void GenericImageData::RemoveSingleImageWrapper(LayerRole role)
 
 
 
+
+
+void GenericImageData::AddOverlay(ImageWrapperBase *new_layer)
+{
+  this->AddOverlayInternal(new_layer, true);
+}

@@ -14,17 +14,22 @@
 #include "SnakeROIModel.h"
 #include "SliceWindowCoordinator.h"
 #include "PolygonDrawingModel.h"
+#include "AnnotationModel.h"
+#include "AnnotationRenderer.h"
 #include "QtWidgetActivator.h"
 #include "SnakeModeRenderer.h"
 #include "SnakeWizardModel.h"
 #include "DisplayLayoutModel.h"
 #include "PaintbrushModel.h"
 #include "SliceWindowDecorationRenderer.h"
+#include "LayerInspectorDialog.h"
 #include "MainImageWindow.h"
 #include "SNAPQtCommon.h"
 #include "QtScrollbarCoupling.h"
+#include "QtSliderCoupling.h"
 #include <QCursor>
 #include <QBitmap>
+#include <QToolButton>
 
 #include <QStackedLayout>
 #include <QMenu>
@@ -74,6 +79,13 @@ SliceViewPanel::SliceViewPanel(QWidget *parent) :
   ui->btnSplitNodes->setDefaultAction(ui->actionSplitSelected);
   ui->btnUndoLast->setDefaultAction(ui->actionUndo);
 
+  ui->btnAnnotationAcceptLine->setDefaultAction(ui->actionAnnotationAcceptLine);
+  ui->btnAnnotationClearLine->setDefaultAction(ui->actionAnnotationClearLine);
+  ui->btnAnnotationSelectAll->setDefaultAction(ui->actionAnnotationSelectAll);
+  ui->btnAnnotationDeleteSelected->setDefaultAction(ui->actionAnnotationDelete);
+  ui->btnAnnotationNext->setDefaultAction(ui->actionAnnotationNext);
+  ui->btnAnnotationPrevious->setDefaultAction(ui->actionAnnotationPrevious);
+
   this->addAction(ui->actionZoom_In);
   this->addAction(ui->actionZoom_Out);
 
@@ -116,6 +128,8 @@ SliceViewPanel::SliceViewPanel(QWidget *parent) :
   loPages->addWidget(ui->pagePolygonDraw);
   loPages->addWidget(ui->pagePolygonEdit);
   loPages->addWidget(ui->pagePolygonInactive);
+  loPages->addWidget(ui->pageAnnotateLineActive);
+  loPages->addWidget(ui->pageAnnotateSelect);
   delete ui->toolbar->layout();
   ui->toolbar->setLayout(loPages);
 
@@ -129,6 +143,17 @@ SliceViewPanel::SliceViewPanel(QWidget *parent) :
   QBitmap bmBitmap(":/root/crosshair_cursor_bitmap.png");
   QBitmap bmMask(":/root/crosshair_cursor_mask.png");
   m_DrawingCrosshairCursor = new QCursor(bmBitmap, bmMask, 7, 7);
+
+  // Configure the context tool button
+  m_ContextToolButton = new QToolButton(ui->sliceView);
+  m_ContextToolButton->setIcon(QIcon(":/root/context_gray_10.png"));
+  m_ContextToolButton->setVisible(false);
+  m_ContextToolButton->setAutoRaise(true);
+  m_ContextToolButton->setIconSize(QSize(10,10));
+  m_ContextToolButton->setMinimumSize(QSize(16,16));
+  m_ContextToolButton->setMaximumSize(QSize(16,16));
+  m_ContextToolButton->setPopupMode(QToolButton::InstantPopup);
+  m_ContextToolButton->setStyleSheet("QToolButton::menu-indicator { image: none; }");
 }
 
 SliceViewPanel::~SliceViewPanel()
@@ -162,6 +187,7 @@ void SliceViewPanel::Initialize(GlobalUIModel *model, unsigned int index)
   ui->imPolygon->SetModel(m_GlobalUI->GetPolygonDrawingModel(index));
   ui->imSnakeROI->SetModel(m_GlobalUI->GetSnakeROIModel(index));
   ui->imPaintbrush->SetModel(m_GlobalUI->GetPaintbrushModel(index));
+  ui->imAnnotation->SetModel(m_GlobalUI->GetAnnotationModel(index));
 
   // ui->labelQuickList->SetModel(m_GlobalUI);
 
@@ -183,9 +209,9 @@ void SliceViewPanel::Initialize(GlobalUIModel *model, unsigned int index)
   // Listen to toolbar change events
   connectITK(m_GlobalUI, ToolbarModeChangeEvent());
 
-  // Listen to polygon state change events
-  connectITK(m_GlobalUI->GetPolygonDrawingModel(index),
-             StateMachineChangeEvent());
+  // Listen to polygon and annotation model state change events
+  connectITK(m_GlobalUI->GetPolygonDrawingModel(index), StateMachineChangeEvent());
+  connectITK(m_GlobalUI->GetAnnotationModel(index), StateMachineChangeEvent());
 
   // Listen to the Snake ROI model too
   connectITK(m_GlobalUI->GetSnakeROIModel(index),
@@ -195,14 +221,21 @@ void SliceViewPanel::Initialize(GlobalUIModel *model, unsigned int index)
   connectITK(m_GlobalUI->GetPaintbrushModel(index),
              PaintbrushModel::PaintbrushMovedEvent());
 
+  // Listen to annotation changes
+  connectITK(m_GlobalUI->GetAnnotationModel(index), ModelUpdateEvent());
+
   // Listen to all (?) events from the snake wizard as well
   connectITK(m_GlobalUI->GetSnakeWizardModel(), IRISEvent());
 
   // Widget coupling
-  makeCoupling(ui->inSlicePosition, m_SliceModel->GetSliceIndexModel());
+  makeCoupling(ui->inSlicePosition, m_SliceModel->GetSliceIndexModel());  
 
   // Activation
   activateOnFlag(this, m_GlobalUI, UIF_BASEIMG_LOADED);
+
+  // Activation for the tile/thumb controls
+  activateOnFlag(ui->btnToggleLayout, m_GlobalUI, UIF_MULTIPLE_BASE_LAYERS,
+                 QtWidgetActivator::HideInactive);
 
   // Set up activation for polygon buttons
   PolygonDrawingModel *pm = m_GlobalUI->GetPolygonDrawingModel(index);
@@ -217,6 +250,12 @@ void SliceViewPanel::Initialize(GlobalUIModel *model, unsigned int index)
   activateOnAllFlags(ui->actionUndo, pm, UIF_DRAWING, UIF_HAVEPOLYGON);
   activateOnAllFlags(ui->actionClearPolygon, pm, UIF_EDITING, UIF_HAVEPOLYGON);
 
+  // Set up activation from the annotation model
+  AnnotationModel *am = m_GlobalUI->GetAnnotationModel(index);
+
+  activateOnFlag(ui->actionAnnotationAcceptLine, am, AnnotationModel::UIF_LINE_MODE_DRAWING);
+  activateOnFlag(ui->actionAnnotationClearLine, am, AnnotationModel::UIF_LINE_MODE_DRAWING);
+
   // Update the expand view button
   this->UpdateExpandViewButton();
 
@@ -227,6 +266,13 @@ void SliceViewPanel::Initialize(GlobalUIModel *model, unsigned int index)
 
   // Arrange the rendering overlays and widgets based on current mode
   this->OnToolbarModeChange();
+
+  // Listen for hover changes to move and activate widgets
+  connectITK(m_SliceModel->GetHoveredImageLayerIdModel(), ValueChangedEvent(),
+             SLOT(OnHoveredLayerChange(const EventBucket &)));
+
+  connectITK(m_SliceModel->GetHoveredImageIsThumbnailModel(), ValueChangedEvent(),
+             SLOT(OnHoveredLayerChange(const EventBucket &)));
 }
 
 void SliceViewPanel::onModelUpdate(const EventBucket &eb)
@@ -335,6 +381,7 @@ void SliceViewPanel::OnToolbarModeChange()
   ovTiled.clear();
   ovTiled.push_back(m_SnakeModeRenderer);
   ovTiled.push_back(ui->imCrosshairs->GetRenderer());
+  ovTiled.push_back(ui->imAnnotation->GetRenderer());
   ovTiled.push_back(ui->imPolygon->GetRenderer());
 
   ovGlobal.clear();
@@ -350,6 +397,8 @@ void SliceViewPanel::OnToolbarModeChange()
       ovTiled.push_back(ui->imPaintbrush->GetRenderer());
       break;
     case ANNOTATION_MODE:
+      ConfigureEventChain(ui->imAnnotation);
+      ovTiled.push_back(ui->imAnnotation->GetRenderer());
       break;
     case ROI_MODE:
       ConfigureEventChain(ui->imSnakeROI);
@@ -378,8 +427,20 @@ void SliceViewPanel::OnToolbarModeChange()
         loPages->setCurrentWidget(ui->pagePolygonInactive); break;
       }
     }
+  else if(m_GlobalUI->GetGlobalState()->GetToolbarMode() == ANNOTATION_MODE)
+    {
+    AnnotationModel *am = m_GlobalUI->GetAnnotationModel(m_Index);
+    if(am->GetFlagDrawingLine())
+      loPages->setCurrentWidget(ui->pageAnnotateLineActive);
+    else if(am->GetAnnotationMode() == ANNOTATION_SELECT)
+      loPages->setCurrentWidget(ui->pageAnnotateSelect);
+    else
+      loPages->setCurrentWidget(ui->pageDefault);
+    }
   else
+    {
     loPages->setCurrentWidget(ui->pageDefault);
+    }
 }
 
 void SliceViewPanel::on_btnZoomToFit_clicked()
@@ -461,13 +522,11 @@ void SliceViewPanel::UpdateExpandViewButton()
   LayerLayout ll = dlm->GetSliceViewLayerLayoutModel()->GetValue();
   if(ll == LAYOUT_TILED)
     {
-    ui->btnToggleLayout->setIcon(QIcon(":/root/layout_overlay_16.png"));
-    ui->btnToggleLayout->setToolTip("Render image overlays on top of each other");
+    ui->btnToggleLayout->setIcon(QIcon(":/root/layout_thumb_16.png"));
     }
   else if(ll == LAYOUT_STACKED)
     {
     ui->btnToggleLayout->setIcon(QIcon(":/root/layout_tile_16.png"));
-    ui->btnToggleLayout->setToolTip("Tile image overlays side by side");
     }
 }
 
@@ -502,4 +561,74 @@ void SliceViewPanel::on_actionZoom_Out_triggered()
 {
   // Zoom out
   m_GlobalUI->GetSliceCoordinator()->ZoomInOrOutInOneWindow(m_Index, 1.0 / 1.1);
+}
+
+void SliceViewPanel::OnHoveredLayerChange(const EventBucket &eb)
+{
+  // Determine the position where to draw the button
+  const SliceViewportLayout::SubViewport *vp = m_SliceModel->GetHoveredViewport();
+  if(vp)
+    {
+    // Set up the location of the button
+    int vppr = m_SliceModel->GetSizeReporter()->GetViewportPixelRatio();
+    int x = (vp->pos[0] + vp->size[0]) / vppr - m_ContextToolButton->width();
+    int y = (ui->sliceView->height() - 1) - (vp->pos[1] + vp->size[1]) / vppr;
+    m_ContextToolButton->setVisible(true);
+    m_ContextToolButton->move(x, y);
+
+    // Set up the context menu on the button
+    MainImageWindow *winmain = findParentWidget<MainImageWindow>(this);
+    LayerInspectorDialog *inspector = winmain->GetLayerInspector();
+
+    // Get the corresponding context menu
+    QMenu *menu = inspector->GetLayerContextMenu(
+                    m_SliceModel->GetDriver()->GetCurrentImageData()->FindLayer(
+                      m_SliceModel->GetHoveredImageLayerId(), false, ALL_ROLES));
+
+    // Show the menu
+    m_ContextToolButton->setMenu(menu);
+    m_ContextToolButton->setDown(false);
+    }
+  else
+    {
+    m_ContextToolButton->setVisible(false);
+    m_ContextToolButton->setMenu(NULL);
+    m_ContextToolButton->setDown(false);
+    }
+}
+
+
+
+
+
+
+
+void SliceViewPanel::on_actionAnnotationAcceptLine_triggered()
+{
+  m_GlobalUI->GetAnnotationModel(m_Index)->AcceptLine();
+}
+
+void SliceViewPanel::on_actionAnnotationClearLine_triggered()
+{
+  m_GlobalUI->GetAnnotationModel(m_Index)->CancelLine();
+}
+
+void SliceViewPanel::on_actionAnnotationSelectAll_triggered()
+{
+  m_GlobalUI->GetAnnotationModel(m_Index)->SelectAllOnSlice();
+}
+
+void SliceViewPanel::on_actionAnnotationDelete_triggered()
+{
+  m_GlobalUI->GetAnnotationModel(m_Index)->DeleteSelectedOnSlice();
+}
+
+void SliceViewPanel::on_actionAnnotationNext_triggered()
+{
+  m_GlobalUI->GetAnnotationModel(m_Index)->GoToNextAnnotation();
+}
+
+void SliceViewPanel::on_actionAnnotationPrevious_triggered()
+{
+  m_GlobalUI->GetAnnotationModel(m_Index)->GoToPreviousAnnotation();
 }

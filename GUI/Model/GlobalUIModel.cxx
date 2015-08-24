@@ -32,6 +32,7 @@
 #include <GenericSliceModel.h>
 #include <OrthogonalSliceCursorNavigationModel.h>
 #include <PolygonDrawingModel.h>
+#include <AnnotationModel.h>
 #include <SnakeROIModel.h>
 #include <SliceWindowCoordinator.h>
 #include <GenericImageData.h>
@@ -92,6 +93,10 @@ GlobalUIModel::GlobalUIModel()
   m_DisplayLayoutModel = DisplayLayoutModel::New();
   m_DisplayLayoutModel->SetParentModel(this);
 
+  // Paintbrush settings
+  m_PaintbrushSettingsModel = PaintbrushSettingsModel::New();
+  m_PaintbrushSettingsModel->SetParentModel(this);
+
   // Create the slice models
   for (unsigned int i = 0; i < 3; i++)
     {
@@ -109,12 +114,11 @@ GlobalUIModel::GlobalUIModel()
 
     m_PaintbrushModel[i] = PaintbrushModel::New();
     m_PaintbrushModel[i]->SetParent(m_SliceModel[i]);
+
+    m_AnnotationModel[i] = AnnotationModel::New();
+    m_AnnotationModel[i]->SetParent(m_SliceModel[i]);
     }
 
-
-  // Paintbrush settings
-  m_PaintbrushSettingsModel = PaintbrushSettingsModel::New();
-  m_PaintbrushSettingsModel->SetParentModel(this);
 
   // Polygon settings
   m_PolygonSettingsModel = PolygonSettingsModel::New();
@@ -243,9 +247,6 @@ GlobalUIModel::GlobalUIModel()
   m_SegmentationVisibilityModel =
       NewNumericPropertyToggleAdaptor(m_SegmentationOpacityModel.GetPointer(), 0, 50);
 
-  // Simple toggle for whether controls for layer visibility and reorder are shown
-  m_LayerVisibilityEditableModel = NewSimpleConcreteProperty(false);
-
   // Listen to state changes from the slice coordinator
   Rebroadcast(m_SliceCoordinator, LinkedZoomUpdateEvent(), LinkedZoomUpdateEvent());
   Rebroadcast(m_SliceCoordinator, LinkedZoomUpdateEvent(), StateMachineChangeEvent());
@@ -256,6 +257,9 @@ GlobalUIModel::GlobalUIModel()
   // Rebroadcast image layer change events
   Rebroadcast(m_Driver, LayerChangeEvent(), LayerChangeEvent());
   Rebroadcast(m_Driver, LayerChangeEvent(), StateMachineChangeEvent());
+
+  // Rebroadcast image layer change events
+  Rebroadcast(m_Driver, WrapperMetadataChangeEvent(), StateMachineChangeEvent());
 
   // Rebroadcast toolbar model change events (TODO: needed?)
   Rebroadcast(m_Driver->GetGlobalState()->GetToolbarModeModel(),
@@ -280,6 +284,7 @@ GlobalUIModel::GlobalUIModel()
   SmartPtr<itk::MemberCommand<Self> > progcmd = itk::MemberCommand<Self>::New();
   progcmd->SetCallbackFunction(this, &GlobalUIModel::ProgressCallback);
   m_ProgressCommand = progcmd.GetPointer();
+
 
 }
 
@@ -323,6 +328,17 @@ bool GlobalUIModel::CheckState(UIState state)
       return m_Driver->IsSnakeModeActive();
     case UIF_LEVEL_SET_ACTIVE:
       return m_Driver->IsSnakeModeLevelSetActive();
+    case UIF_MULTIPLE_BASE_LAYERS:
+      {
+      LayerIterator it = m_Driver->GetCurrentImageData()->GetLayers(
+                           MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE);
+      int n = 0;
+      for(; !it.IsAtEnd(); ++it)
+        if(it.GetLayer() && !it.GetLayer()->IsSticky())
+          ++n;
+
+      return n > 1;
+      }
     }
 
   return false;
@@ -358,19 +374,16 @@ void GlobalUIModel::ToggleOverlayVisibility()
 {
   // Are we in tiled mode or in stack mode?
   GenericImageData *id = m_Driver->GetCurrentImageData();
-  bool stack =
-      (m_DisplayLayoutModel->GetSliceViewLayerLayoutModel()->GetValue()
-       == LAYOUT_STACKED);
 
   // Remember what layer is current in the general properties model
   ImageWrapperBase *curr_layer = m_LayerGeneralPropertiesModel->GetLayer();
 
   // Apply the toggle for all overlays
-  for(LayerIterator it = id->GetLayers(OVERLAY_ROLE); !it.IsAtEnd(); ++it)
+  for(LayerIterator it = id->GetLayers(MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE); !it.IsAtEnd(); ++it)
     {
     // In stack mode, every overlay is affected. In tile mode, only stickly layers
     // are affected
-    if(stack || it.GetLayer()->IsSticky())
+    if(it.GetLayer()->IsSticky())
       {
       m_LayerGeneralPropertiesModel->SetLayer(it.GetLayer());
       m_LayerGeneralPropertiesModel->GetLayerVisibilityModel()->SetValue(
@@ -386,19 +399,16 @@ void GlobalUIModel::AdjustOverlayOpacity(int delta)
 {
   // Are we in tiled mode or in stack mode?
   GenericImageData *id = m_Driver->GetCurrentImageData();
-  bool stack =
-      (m_DisplayLayoutModel->GetSliceViewLayerLayoutModel()->GetValue()
-       == LAYOUT_STACKED);
 
   // Remember what layer is current in the general properties model
   ImageWrapperBase *curr_layer = m_LayerGeneralPropertiesModel->GetLayer();
 
   // Apply the toggle for all overlays
-  for(LayerIterator it = id->GetLayers(OVERLAY_ROLE); !it.IsAtEnd(); ++it)
+  for(LayerIterator it = id->GetLayers(MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE); !it.IsAtEnd(); ++it)
     {
     // In stack mode, every overlay is affected. In tile mode, only stickly layers
     // are affected
-    if(stack || it.GetLayer()->IsSticky())
+    if(it.GetLayer()->IsSticky())
       {
       m_LayerGeneralPropertiesModel->SetLayer(it.GetLayer());
       int op = m_LayerGeneralPropertiesModel->GetLayerOpacityModel()->GetValue();
@@ -671,11 +681,13 @@ void GlobalUIModel::SetSegmentationOpacityValue(int value)
 
 
 std::vector<std::string>
-GlobalUIModel::GetRecentHistoryItems(const char *historyCategory, unsigned int k)
+GlobalUIModel::GetRecentHistoryItems(const char *historyCategory, unsigned int k, bool global_history)
 {
   // Load the list of recent files from the history file
   const HistoryManager::HistoryListType &history =
-      this->GetSystemInterface()->GetHistoryManager()->GetGlobalHistory(historyCategory);
+      global_history
+      ? this->GetSystemInterface()->GetHistoryManager()->GetGlobalHistory(historyCategory)
+      : this->GetSystemInterface()->GetHistoryManager()->GetLocalHistory(historyCategory);
 
   std::vector<std::string> recent;
 
@@ -755,10 +767,10 @@ GlobalUIModel::CreateIOWizardModelForSave(ImageWrapperBase *layer, LayerRole rol
   switch(role)
     {
     case MAIN_ROLE:
-      category = "Main Image";
+      category = "Image";
       break;
     case OVERLAY_ROLE:
-      category = "Overlay Image";
+      category = "Image";
       break;
     case SNAP_ROLE:
       if(dynamic_cast<SpeedImageWrapper *>(layer))

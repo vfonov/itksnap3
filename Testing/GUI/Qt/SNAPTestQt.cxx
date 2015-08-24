@@ -5,7 +5,6 @@
 #include <QLineEdit>
 #include <QFile>
 #include <QTextStream>
-#include <QQmlEngine>
 #include <QDebug>
 #include <QPushButton>
 #include <QTimer>
@@ -13,6 +12,14 @@
 #include <QRegExp>
 #include <QApplication>
 #include "SNAPQtCommon.h"
+
+#if QT_VERSION >= 0x050000
+  #include <QJSEngine>
+#else
+  #include <QScriptEngine>
+  #define QJSEngine QScriptEngine
+  #define QJSValue QScriptValue
+#endif
 
 using namespace std;
 
@@ -63,7 +70,9 @@ SNAPTestQt::LaunchTest(std::string test)
 
   // Create and run the thread
   TestWorker *worker = new TestWorker(this, from_utf8(test), m_ScriptEngine, m_Acceleration);
-  connect(worker, &TestWorker::finished, worker, &QObject::deleteLater);
+
+  connect(worker, SIGNAL(finished()), worker, SLOT(deleteLater()));
+
   worker->start();
 }
 
@@ -205,6 +214,16 @@ void SNAPTestQt::validateValue(QVariant v1, QVariant v2)
 
 }
 
+void SNAPTestQt::sleep(int milli_sec)
+{
+  // Scale requested sleep time by acceleration factor
+  int ms_actual = (int)(milli_sec / m_Acceleration);
+
+  // Sleep
+  qDebug() << "sleeping for " << ms_actual << "ms.";
+  QThread::msleep(ms_actual);
+}
+
 void SNAPTestQt::validateFloatValue(double v1, double v2, double precision)
 {
   // Validation involves checking if the values are equal. If not,
@@ -318,6 +337,7 @@ void TestWorker::processDirective(QString line)
   QRegExp rxSleep("//---\\s+sleep\\s+(\\d+)");
   QRegExp rxSource("//---\\s+source\\s+(\\w+)");
 
+  qDebug() << "(--) " << line;
   if(rxSleep.indexIn(line) >= 0)
     {
     // Sleeping
@@ -434,7 +454,7 @@ void TestWorker::source(QString script_url)
     script_url = QString(":/scripts/Scripts/test_%1.js").arg(script_url);
 
   // Report which test we are accessing
-  qDebug() << "Running test " << script_url;
+  qDebug() << "Running test: " << script_url;
 
   // Find the script file corresponding to the test
   QFile file(script_url);
@@ -457,7 +477,7 @@ void TestWorker::source(QString script_url)
 
     if(rxSleep.indexIn(line) >= 0)
       {
-      line = QString("thread.wait(500)");
+      line = QString("engine.sleep(500)");
       }
     else if(rxComment.indexIn(line) >= 0)
       {

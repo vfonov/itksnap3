@@ -32,31 +32,11 @@ font-size: 12px;
 QSpinBox {
 font-size: 11px;
 }
-/*
 QGroupBox {
   background-origin: content;
   margin-top: 15px;
   font-weight: bold;
   font-size: 12px;
-  font-family: helvetica;
-  color: rgb(30,30,160);
-  background-color: rgb(237,237,237);
-  padding: 5px;
-  border-radius: 4px;
-  border: 1px solid rgb(130,130,130);
-}
-QGroupBox::title {
-  subcontrol-origin: 	margin;
-  subcontrol-position: top left;
-}
-*/
-
-QGroupBox {
-  background-origin: content;
-  margin-top: 15px;
-  font-weight: bold;
-  font-size: 12px;
-  text-shadow:1px 1px 0 white;
   color: rgb(30,30,160);
   background-color: rgb(222,222,222);
   padding: 5px;
@@ -427,7 +407,7 @@ p, li { white-space: pre-wrap; }
              <string>Lower threshold only</string>
             </property>
             <property name="currentIndex">
-             <number>0</number>
+             <number>3</number>
             </property>
             <widget class="QWidget" name="pgThreshold">
              <layout class="QGridLayout" name="gridLayout_3">
@@ -1163,7 +1143,7 @@ competition</string>
               <item row="0" column="0" colspan="2">
                <widget class="QLabel" name="label_21">
                 <property name="styleSheet">
-                 <string notr="true">text-size:11px;</string>
+                 <string notr="true"/>
                 </property>
                 <property name="text">
                  <string>Use this mode to perform segmentation using a speed image  computed outside of ITK-SNAP.</string>
@@ -1689,11 +1669,7 @@ p, li { white-space: pre-wrap; }
                 </size>
                </property>
                <property name="text">
-                <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
-&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
-p, li { white-space: pre-wrap; }
-&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'.Lucida Grande UI'; font-size:12px; font-weight:400; font-style:normal;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Lucida Grande'; font-size:13px;&quot;&gt;Configure the parameters of the contour evolution differential equation&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+                <string>Configure the parameters of the contour evolution differential equation</string>
                </property>
                <property name="wordWrap">
                 <bool>true</bool>
@@ -1765,11 +1741,7 @@ p, li { white-space: pre-wrap; }
              <item>
               <widget class="QLabel" name="label_14">
                <property name="text">
-                <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
-&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
-p, li { white-space: pre-wrap; }
-&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'.Lucida Grande UI'; font-size:12px; font-weight:400; font-style:normal;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Lucida Grande'; font-size:13px;&quot;&gt;Execute and control the evolution&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+                <string>Execute and control the evolution</string>
                </property>
                <property name="wordWrap">
                 <bool>true</bool>
@@ -1812,6 +1784,9 @@ p, li { white-space: pre-wrap; }
              </item>
              <item>
               <widget class="QToolButton" name="btnRewind">
+               <property name="toolTip">
+                <string>Restart evolution</string>
+               </property>
                <property name="text">
                 <string>...</string>
                </property>
@@ -1830,6 +1805,9 @@ p, li { white-space: pre-wrap; }
              </item>
              <item>
               <widget class="QToolButton" name="btnPlay">
+               <property name="toolTip">
+                <string>Run/pause active contour evolution</string>
+               </property>
                <property name="text">
                 <string>...</string>
                </property>
@@ -1854,6 +1832,9 @@ p, li { white-space: pre-wrap; }
              </item>
              <item>
               <widget class="QToolButton" name="btnSingleStep">
+               <property name="toolTip">
+                <string>Perform a single evolution iteration</string>
+               </property>
                <property name="text">
                 <string>...</string>
                </property>
@@ -1944,7 +1925,11 @@ p, li { white-space: pre-wrap; }
               </widget>
              </item>
              <item row="1" column="0">
-              <widget class="QSpinBox" name="inStepSize"/>
+              <widget class="QSpinBox" name="inStepSize">
+               <property name="toolTip">
+                <string>Number of evolution steps per iteration.</string>
+               </property>
+              </widget>
              </item>
             </layout>
            </widget>
@@ -1962,11 +1947,7 @@ p, li { white-space: pre-wrap; }
           <item>
            <widget class="QLabel" name="label_17">
             <property name="text">
-             <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
-&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
-p, li { white-space: pre-wrap; }
-&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'.Lucida Grande UI'; font-size:12px; font-weight:400; font-style:normal;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Lucida Grande'; font-size:13px;&quot;&gt;Press 'Finish&amp;quot; to accept the result.&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+             <string>Press 'Finish' to accept the result</string>
             </property>
             <property name="wordWrap">
              <bool>true</bool>
@@ -2005,6 +1986,9 @@ p, li { white-space: pre-wrap; }
                  <height>16777215</height>
                 </size>
                </property>
+               <property name="toolTip">
+                <string>Return to bubble placement</string>
+               </property>
                <property name="text">
                 <string>Back</string>
                </property>
@@ -2023,6 +2007,9 @@ p, li { white-space: pre-wrap; }
                  <width>64</width>
                  <height>16777215</height>
                 </size>
+               </property>
+               <property name="toolTip">
+                <string>Accept segmentation and return to the main ITK-SNAP window</string>
                </property>
                <property name="text">
                 <string>Finish</string>

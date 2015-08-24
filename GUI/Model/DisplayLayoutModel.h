@@ -45,7 +45,7 @@ public:
   void SetParentModel(GlobalUIModel *parentModel);
 
   /** Model managing the view panel layouts */
-  irisGetMacro(ViewPanelLayoutModel, AbstractViewPanelLayoutProperty *)
+  irisSimplePropertyAccessMacro(ViewPanelLayout, ViewPanelLayout)
 
   /**
    * Read-only boolean property models for the visibility of any specific
@@ -61,7 +61,19 @@ public:
    * on top of each other using transparency. Otherwise, each overlay is shown
    * in its own cell.
    */
-  irisGetMacro(SliceViewLayerTilingModel, AbstractSimpleUIntVec2Property *)
+  irisSimplePropertyAccessMacro(SliceViewLayerTiling, Vector2ui)
+
+  /**
+   * Model describing the number of 'ground-level' layers, i.e. layers that
+   * are drawn on their own, rather than overlayed on other layers
+   */
+  irisSimplePropertyAccessMacro(NumberOfGroundLevelLayers, int)
+
+  /**
+   * Model describing the relative size of the thumbnails in thumbnail view,
+   * in percent.
+   */
+  irisRangedPropertyAccessMacro(ThumbnailRelativeSize, double)
 
   /**
    * A model for the layout of the layers in a slice view. This model sets
@@ -103,6 +115,14 @@ protected:
 
   // The current tiling dimensons
   Vector2ui m_LayerTiling;
+
+  // The number of 'ground-level' layers, i.e. layers that are drawn on their own
+  // than overlayed on other layers
+  SmartPtr<AbstractSimpleIntProperty> m_NumberOfGroundLevelLayersModel;
+  bool GetNumberOfGroundLevelLayersValue(int &value);
+
+  // Thumbnail size
+  SmartPtr<ConcreteRangedDoubleProperty> m_ThumbnailRelativeSizeModel;
 
   virtual void OnUpdate();
 

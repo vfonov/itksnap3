@@ -70,7 +70,7 @@ class GaussianMixtureModel;
 class RandomForestClassifier;
 struct IRISDisplayGeometry;
 class LabelUseHistory;
-
+class ImageAnnotationData;
 
 template <class TTraits> class PresetManager;
 class ColorMapPresetTraits;
@@ -225,6 +225,12 @@ public:
    * transform)
    */
   void AddIRISCoregOverlayImage(GuidedNativeImageIO *io, Registry *metadata);
+
+  /**
+   * Add a 'derived' overlay, i.e., an overlay generated using image processing from one
+   * of the existing image layers
+   */
+  void AddDerivedOverlayImage(ImageWrapperBase *overlay);
 
   /**
    * Remove a specific overlay
@@ -584,6 +590,17 @@ public:
 
   // --------------------- End project support ----------------------------
 
+  // --------------------- Annotation support ----------------------------
+
+  /**
+   * Read annotations from file
+   */
+  void LoadAnnotations(const char *filename);
+
+  /**
+   * Save annotations to file
+   */
+  void SaveAnnotations(const char *filename);
 
 protected:
 
@@ -719,6 +736,8 @@ protected:
 
   // Auto-adjust contrast of a layer on load
   void AutoContrastLayerOnLoad(ImageWrapperBase *layer);
+
+
 };
 
 #endif // __IRISApplication_h_

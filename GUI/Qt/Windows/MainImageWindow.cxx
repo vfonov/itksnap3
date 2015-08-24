@@ -89,6 +89,81 @@
 #include <QDesktopWidget>
 #include <QShortcut>
 
+#include <QTextStream>
+
+QString read_tooltip_qt(const QString &filename)
+{
+  QFile file(filename);
+  file.open(QFile::ReadOnly);
+  QTextStream ts(&file);
+  QString result = ts.readAll();
+  file.close();;
+
+  return result;
+}
+
+class ModeTooltipBuilder
+{
+public:
+  ModeTooltipBuilder(QString title, QString descr)
+  {
+    m_Title = title;
+    m_Descr = descr;
+
+    // Read the HTML templates
+    if(m_RowTemplate.isEmpty())
+      {
+      m_RowTemplate = ReadResource(":/html/TipTableRow");
+      m_MainTemplate = ReadResource(":/html/ModeTipTemplate");
+      }
+  }
+
+  enum Action { LMB, RMB, SCROLL };
+
+  void addMouseAction(Action action, QString descr, QString modifier = "")
+  {
+    QString row = m_RowTemplate;
+    QString atext;
+    switch(action)
+      {
+      case ModeTooltipBuilder::LMB:
+        atext = "left_click"; break;
+      case ModeTooltipBuilder::RMB:
+        atext = "right_click"; break;
+      case ModeTooltipBuilder::SCROLL:
+        atext = "scrolling"; break;
+      }
+
+    QString fullrow = row.arg(atext).arg(descr).arg(modifier);
+    m_Rows.append(fullrow);
+  }
+
+  QString makeTooltip()
+  {
+    QString tooltip = m_MainTemplate;
+    return tooltip.arg(m_Title, m_Descr, m_Rows);
+  }
+
+private:
+
+  QString ReadResource(QString tag)
+  {
+    QFile file(tag);
+    file.open(QFile::ReadOnly);
+    QTextStream ts(&file);
+    QString result = ts.readAll();
+    file.close();
+    return result;
+  }
+
+
+  QString m_Title, m_Descr, m_Rows;
+  static QString m_RowTemplate, m_MainTemplate;
+};
+
+QString ModeTooltipBuilder::m_MainTemplate;
+QString ModeTooltipBuilder::m_RowTemplate;
+
 
 MainImageWindow::MainImageWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -104,6 +179,7 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   ui->actionPolygon->setActionGroup(grpToolbarMain);
   ui->actionPaintbrush->setActionGroup(grpToolbarMain);
   ui->actionSnake->setActionGroup(grpToolbarMain);
+  ui->actionAnnotation->setActionGroup(grpToolbarMain);
 
   QActionGroup *grpToolbar3D = new QActionGroup(this);
   ui->action3DTrackball->setActionGroup(grpToolbar3D);
@@ -224,6 +300,11 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   connect(ui->actionRecent_3, SIGNAL(triggered()), SLOT(LoadRecentActionTriggered()));
   connect(ui->actionRecent_4, SIGNAL(triggered()), SLOT(LoadRecentActionTriggered()));
   connect(ui->actionRecent_5, SIGNAL(triggered()), SLOT(LoadRecentActionTriggered()));
+  connect(ui->actionRecentOverlay_1, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
+  connect(ui->actionRecentOverlay_2, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
+  connect(ui->actionRecentOverlay_3, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
+  connect(ui->actionRecentOverlay_4, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
+  connect(ui->actionRecentOverlay_5, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
   connect(ui->actionRecentWorkspace1, SIGNAL(triggered()), SLOT(LoadRecentProjectActionTriggered()));
   connect(ui->actionRecentWorkspace2, SIGNAL(triggered()), SLOT(LoadRecentProjectActionTriggered()));
   connect(ui->actionRecentWorkspace3, SIGNAL(triggered()), SLOT(LoadRecentProjectActionTriggered()));
@@ -253,6 +334,70 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   this->HookupSecondaryShortcutToAction(QKeySequence(","), ui->actionForegroundLabelPrev);
   this->HookupSecondaryShortcutToAction(QKeySequence("."), ui->actionForegroundLabelNext);
   this->HookupShortcutToAction(QKeySequence("C"), ui->actionCenter_on_Cursor);
+
+  // Generate tooltips for the complex actions
+  ModeTooltipBuilder ttCrosshair("Crosshair Mode (1)",
+                                 "Used to position the 3D cursor in the three orthogonal image slices.");
+  ttCrosshair.addMouseAction(ModeTooltipBuilder::LMB, "<b>Place and move the 3D cursor</b>");
+  ttCrosshair.addMouseAction(ModeTooltipBuilder::RMB, "Zoom in and out (hold & drag)");
+  ttCrosshair.addMouseAction(ModeTooltipBuilder::LMB, "Pan (hold & drag)","⌥");
+  ttCrosshair.addMouseAction(ModeTooltipBuilder::SCROLL, "Go to next/previous image slice");
+  ttCrosshair.addMouseAction(ModeTooltipBuilder::SCROLL, "Go to next/previous image component","⇧");
+  ui->actionCrosshair->setToolTip(ttCrosshair.makeTooltip());
+
+  ModeTooltipBuilder ttZoom("Zoom/Pan Mode (2)",
+                            "Used to zoom into the image and to pan around when zoomed in.");
+  ttZoom.addMouseAction(ModeTooltipBuilder::LMB, "<b>Pan (hold & drag)</b>");
+  ttZoom.addMouseAction(ModeTooltipBuilder::RMB, "<b>Zoom in and out (hold & drag)</b>");
+  ttZoom.addMouseAction(ModeTooltipBuilder::LMB, "Place and move the 3D cursor","⌥");
+  ttZoom.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image slices");
+  ttZoom.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image components","⇧");
+  ui->actionZoomPan->setToolTip(ttZoom.makeTooltip());
+
+  ModeTooltipBuilder ttPolygon("Polygon Mode (3)",
+                               "Used to perform manual segmentation by drawing and filling polygons in the three orthogonal image slices.");
+  ttPolygon.addMouseAction(ModeTooltipBuilder::LMB, "<b>Add points to the polygon and edit the completed polygon</b>");
+  ttPolygon.addMouseAction(ModeTooltipBuilder::RMB, "Zoom in and out (hold & drag)");
+  ttPolygon.addMouseAction(ModeTooltipBuilder::LMB, "Place and move the 3D cursor","⌥");
+  ttPolygon.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image slices");
+  ttPolygon.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image components","⇧");
+  ui->actionPolygon->setToolTip(ttPolygon.makeTooltip());
+
+  ModeTooltipBuilder ttPaintbrush("Paintbrush Mode (4)",
+                               "Used to perform manual segmentation by drawing with a paintbrush-like tool. "
+                               "Different brush shapes are available, including an adaptive brush that adjusts itself to the image data.");
+  ttPaintbrush.addMouseAction(ModeTooltipBuilder::LMB, "<b>Paint with the active label</b>");
+  ttPaintbrush.addMouseAction(ModeTooltipBuilder::RMB, "<b>Erase voxels painted with the active label</b>");
+  ttPaintbrush.addMouseAction(ModeTooltipBuilder::LMB, "Place and move the 3D cursor","⌥");
+  ttPaintbrush.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image slices");
+  ttPaintbrush.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image components","⇧");
+  ui->actionPaintbrush->setToolTip(ttPaintbrush.makeTooltip());
+
+  ModeTooltipBuilder ttSnake("Active Contour (aka \"Snake\") Segmentation Mode (5)",
+                             "Used to select the region of interest for semi-automatic active contour "
+                             "segmentation and start the semi-automatic segmentation wizard.");
+  ttSnake.addMouseAction(ModeTooltipBuilder::LMB, "<b>Adjust the boundaries of the region of interest</b>");
+  ttSnake.addMouseAction(ModeTooltipBuilder::RMB, "Zoom in and out (hold & drag)");
+  ttSnake.addMouseAction(ModeTooltipBuilder::LMB, "Place and move the 3D cursor","⌥");
+  ttSnake.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image slices");
+  ttSnake.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image components","⇧");
+  ui->actionSnake->setToolTip(ttSnake.makeTooltip());
+
+  ModeTooltipBuilder ttRuler("Image Annotation Mode (6)",
+                             "Used to draw annotations (lines, text) on image slices and to measure "
+                             "distances and angles between points in a slice.");
+  ttRuler.addMouseAction(ModeTooltipBuilder::LMB, "<b>Draw and edit annotations</b>");
+  ttRuler.addMouseAction(ModeTooltipBuilder::RMB, "Zoom in and out (hold & drag)");
+  ttRuler.addMouseAction(ModeTooltipBuilder::LMB, "Place and move the 3D cursor","⌥");
+  ttRuler.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image slices");
+  ttRuler.addMouseAction(ModeTooltipBuilder::SCROLL, "Scroll through image components","⇧");
+  ui->actionAnnotation->setToolTip(ttRuler.makeTooltip());
+
+  // Translate the tooltips in all the widgets. This changes the apple symbols that are currently
+  // hard coded in the tooltips into their Windows/Linux equivalents
+#ifndef __APPLE__
+  TranslateChildTooltipKeyModifiers(this);
+#endif
 }
 
 
@@ -307,11 +452,11 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   // menu. TODO: a more direct way would be to listen to changes to the
   // history, but that requires making history an event-firing object
   LatentITKEventNotifier::connect(model->GetDriver(), LayerChangeEvent(),
-                                  this, SLOT(onModelUpdate(const EventBucket&)));
+                                  this, SLOT(onModelUpdate(EventBucket)));
 
   // Also listen to changes in the image filenames
   LatentITKEventNotifier::connect(model->GetDriver(), WrapperMetadataChangeEvent(),
-                                  this, SLOT(onModelUpdate(const EventBucket&)));
+                                  this, SLOT(onModelUpdate(EventBucket)));
 
   // Hook up the recent lists
   ui->panelRecentImages->Initialize(m_Model, "MainImage");
@@ -348,13 +493,6 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
     makeWidgetVisibilityCoupling(m_ViewPanels[i],
                                  layoutModel->GetViewPanelVisibilityModel(i));
     }
-
-  // Populate the recent file menu
-  this->UpdateRecentMenu();
-  this->UpdateRecentProjectsMenu();
-
-  // Update which page is shown
-  this->UpdateMainLayout();
 
   // Set up activations - File menu
   activateOnFlag(ui->actionOpenMain, m_Model, UIF_IRIS_MODE);
@@ -410,6 +548,7 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   activateOnFlag(ui->actionPolygon, m_Model, UIF_BASEIMG_LOADED);
   activateOnFlag(ui->actionSnake, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionPaintbrush, m_Model, UIF_BASEIMG_LOADED);
+  activateOnFlag(ui->actionAnnotation, m_Model, UIF_BASEIMG_LOADED);
 
   activateOnFlag(ui->action3DCrosshair, m_Model, UIF_BASEIMG_LOADED);
   activateOnFlag(ui->action3DTrackball, m_Model, UIF_BASEIMG_LOADED);
@@ -463,7 +602,8 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
     // Delaying the relayout of the main window seems to reduce the amount of
     // flashing that occurs when loading images.
     // TODO: figure out if we can avoid flashing altogether
-    QTimer::singleShot(200, this, SLOT(UpdateMainLayout()));
+    // QTimer::singleShot(200, this, SLOT(UpdateMainLayout()));
+    this->UpdateMainLayout();
     }
 
   if(b.HasEvent(LayerChangeEvent()) || b.HasEvent(WrapperMetadataChangeEvent()))
@@ -472,7 +612,8 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
     this->UpdateWindowTitle();
     }
 
-  if(b.HasEvent(ValueChangedEvent(), m_Model->GetHistoryModel("MainImage")))
+  if(b.HasEvent(LayerChangeEvent()) ||
+     b.HasEvent(ValueChangedEvent(), m_Model->GetHistoryModel("MainImage")))
     {
     this->UpdateRecentMenu();
     }
@@ -495,6 +636,9 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
 
 void MainImageWindow::UpdateMainLayout()
 {
+  // Update the image dimensions
+  this->UpdateCanvasDimensions();
+
   // Choose what page to show depending on if an image has been loaded
   if(m_Model->GetDriver()->IsMainImageLoaded())
     {
@@ -520,16 +664,29 @@ void MainImageWindow::UpdateMainLayout()
 
 void MainImageWindow::UpdateCanvasDimensions()
 {
+  // The desired window aspect ratio
+  double windowAR = 1.0;
+
   // Get the current aspect ratio
-  Vector2ui tiling =
-      m_Model->GetDisplayLayoutModel()->GetSliceViewLayerTilingModel()->GetValue();
+  if(m_Model->GetDriver()->IsMainImageLoaded())
+    {
+    if(m_Model->GetDisplayLayoutModel()->GetSliceViewLayerLayoutModel()->GetValue() == LAYOUT_TILED)
+      {
+      Vector2ui tiling =
+          m_Model->GetDisplayLayoutModel()->GetSliceViewLayerTilingModel()->GetValue();
 
-  // Compute the tiling aspect ratio
-  double tilingAR = tiling(1) * 1.0 / tiling(0);
+      // Compute the tiling aspect ratio
+      double tilingAR = tiling(1) * 1.0 / tiling(0);
 
-  // The tiling aspect ratio should not be mapped directly to the screen aspect ratio -
-  // this creates configurations that are too wide. Instead, we will use a scaling factor
-  double windowAR = (tilingAR - 1.0) * 0.6 + 1.0;
+      // The tiling aspect ratio should not be mapped directly to the screen aspect ratio -
+      // this creates configurations that are too wide. Instead, we will use a scaling factor
+      windowAR = (tilingAR - 1.0) * 0.6 + 1.0;
+      }
+    else if(m_Model->GetDisplayLayoutModel()->GetNumberOfGroundLevelLayers() > 1)
+      {
+      windowAR = 1.0 / 0.88;
+      }
+    }
 
   // Adjust the width of the screen to achieve desired aspect ratio
   int cw_width = static_cast<int>(windowAR * ui->centralwidget->height());
@@ -581,6 +738,33 @@ void MainImageWindow::UpdateRecentMenu()
       menus[i]->setEnabled(false);
       }
     }
+
+  // Do the same for the overlay menus
+  QAction *omenus[] = {
+    ui->actionRecentOverlay_1,
+    ui->actionRecentOverlay_2,
+    ui->actionRecentOverlay_3,
+    ui->actionRecentOverlay_4,
+    ui->actionRecentOverlay_5};
+
+  // List of filenames - from local history
+  recent = m_Model->GetRecentHistoryItems("AnatomicImage", 5, false);
+
+  // Toggle the state of each menu item
+  for(int i = 0; i < 5; i++)
+    {
+    if(i < recent.size())
+      {
+      omenus[i]->setText(from_utf8(recent[i]));
+      omenus[i]->setEnabled(true);
+      }
+    else
+      {
+      omenus[i]->setText("Not available");
+      omenus[i]->setEnabled(false);
+      }
+    }
+
 }
 
 void MainImageWindow::UpdateRecentProjectsMenu()
@@ -617,32 +801,49 @@ void MainImageWindow::UpdateRecentProjectsMenu()
 void MainImageWindow::UpdateWindowTitle()
 {
   GenericImageData *gid = m_Model->GetDriver()->GetIRISImageData();
-  QString mainfile, segfile;
+  QString mainfile, segfile, projfile;
   if(gid && gid->IsMainLoaded())
     {
     mainfile = QFileInfo(from_utf8(gid->GetMain()->GetFileName())).fileName();
     segfile = QFileInfo(from_utf8(gid->GetSegmentation()->GetFileName())).fileName();
     }
 
-  if(mainfile.length())
+  // If a project is loaded, we display the project title
+  if(m_Model->GetGlobalState()->GetProjectFilename().length())
+    projfile = QFileInfo(from_utf8(m_Model->GetGlobalState()->GetProjectFilename())).fileName();
+
+  // Set up the window title
+  if(projfile.length())
     {
-    if(segfile.length())
-      {
-      this->setWindowTitle(QString("%1 - %2 - ITK-SNAP").arg(mainfile).arg(segfile));
-      ui->actionSaveSegmentation->setText(QString("Save \"%1\"").arg(segfile));
-      ui->actionSaveSegmentationAs->setText(QString("Save \"%1\" as...").arg(segfile));
-      ui->actionSaveSegmentationAs->setVisible(true);
-      }
-    else
-      {
-      this->setWindowTitle(QString("%1 - New Segmentation - ITK-SNAP").arg(mainfile));
-      ui->actionSaveSegmentation->setText(QString("Save Segmentation Image ..."));
-      ui->actionSaveSegmentationAs->setVisible(false);
-      }
+    this->setWindowTitle(QString("%1 - ITK-SNAP").arg(projfile));
+    }
+  else if(mainfile.length() && segfile.length())
+    {
+    this->setWindowTitle(QString("%1 - %2 - ITK-SNAP").arg(mainfile).arg(segfile));
+    }
+  else if(mainfile.length())
+    {
+    this->setWindowTitle(QString("%1 - New Segmentation - ITK-SNAP").arg(mainfile));
     }
   else
     {
     this->setWindowTitle("ITK-SNAP");
+    }
+
+  // Set up the save segmentation menu items
+  if(segfile.length())
+    {
+    ui->actionSaveSegmentation->setText(QString("Save \"%1\"").arg(segfile));
+    ui->actionSaveSegmentationAs->setText(QString("Save \"%1\" as...").arg(segfile));
+    ui->actionSaveSegmentationAs->setVisible(true);
+    }
+  else if(mainfile.length())
+    {
+    ui->actionSaveSegmentation->setText(QString("Save Segmentation Image ..."));
+    ui->actionSaveSegmentationAs->setVisible(false);
+    }
+  else
+    {
     ui->actionSaveSegmentation->setText(QString("Save"));
     ui->actionSaveSegmentationAs->setText(QString("Save as..."));
     }
@@ -842,9 +1043,30 @@ void MainImageWindow::LoadDroppedFile(QString file)
     }
 }
 
+#ifdef __APPLE__
+#include <CoreFoundation/CFError.h>
+#include <CoreFoundation/CFURL.h>
+#endif
+
 void MainImageWindow::dropEvent(QDropEvent *event)
 {
-  QString file = event->mimeData()->urls().first().toLocalFile();
+  QUrl url = event->mimeData()->urls().first();
+
+#if defined(__APPLE__) && QT_VERSION >= 0x050000
+  // TODO: this is a Yosemite bug fix - bug https://bugreports.qt.io/browse/QTBUG-40449
+  // Check if this is still necessary in future Qt versions (discovered in Qt 5.4)
+  if (url.toString().startsWith("file:///.file/id="))
+    {
+    CFURLRef cfurl = url.toCFURL();
+    CFErrorRef error = 0;
+    CFURLRef absurl = CFURLCreateFilePathURL(kCFAllocatorDefault, cfurl, &error);
+    url = QUrl::fromCFURL(absurl);
+    CFRelease(cfurl);
+    CFRelease(absurl);
+    }
+#endif
+
+  QString file = url.toLocalFile();
   LoadDroppedFile(file);
   event->acceptProposedAction();
 }
@@ -884,6 +1106,7 @@ void MainImageWindow::LoadMainImage(const QString &file)
     {
     ReportNonLethalException(this, exc, "Image IO Error",
                              QString("Failed to load image %1").arg(file));
+
     }
 }
 
@@ -893,6 +1116,29 @@ void MainImageWindow::LoadRecentActionTriggered()
   QAction *action = qobject_cast<QAction *>(sender());
   QString file = action->text();
   LoadMainImage(file);
+}
+
+void MainImageWindow::LoadRecentOverlayActionTriggered()
+{
+  // Get the filename that wants to be loaded
+  QAction *action = qobject_cast<QAction *>(sender());
+  QString file = action->text();
+
+  // Try loading the image
+  try
+    {
+    // Change cursor for this operation
+    QtCursorOverride c(Qt::WaitCursor);
+    IRISWarningList warnings;
+    SmartPtr<LoadOverlayImageDelegate> del = LoadOverlayImageDelegate::New();
+    del->Initialize(m_Model->GetDriver());
+    m_Model->GetDriver()->LoadImageViaDelegate(file.toUtf8().constData(), del, warnings);
+    }
+  catch(exception &exc)
+    {
+    ReportNonLethalException(this, exc, "Image IO Error",
+                             QString("Failed to load overlay image %1").arg(file));
+    }
 }
 
 void MainImageWindow::LoadProject(const QString &file)
@@ -1040,7 +1286,7 @@ void MainImageWindow::on_actionAdd_Overlay_triggered()
   delegate->Initialize(m_Model->GetDriver());
   SmartPtr<ImageIOWizardModel> model = ImageIOWizardModel::New();
   model->InitializeForLoad(m_Model, delegate,
-                           "AnatomicImage", "Overlay Image");
+                           "AnatomicImage", "Additional Image");
 
   // Execute the IO wizard
   ImageIOWizard wiz(this);
@@ -1697,3 +1943,4 @@ void MainImageWindow::on_actionUnload_Last_Overlay_triggered()
     }
 
 }
+

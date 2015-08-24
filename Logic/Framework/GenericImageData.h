@@ -57,6 +57,7 @@ class GenericImageData;
 class LayerIterator;
 class Registry;
 class GuidedNativeImageIO;
+class ImageAnnotationData;
 
 /**
  * \class GenericImageData
@@ -219,6 +220,7 @@ public:
 
   /** Handle overlays */
   virtual void AddOverlay(GuidedNativeImageIO *io);
+  virtual void AddOverlay(ImageWrapperBase *new_layer);
   virtual void UnloadOverlays();
   virtual void UnloadOverlayLast();
   virtual void UnloadOverlay(ImageWrapperBase *overlay);
@@ -276,6 +278,9 @@ public:
   /** Get the image coordinate geometry */
   const ImageCoordinateGeometry &GetImageGeometry() const;
 
+  /** Get the list of annotations created by the user */
+  irisGetMacro(Annotations, ImageAnnotationData *)
+
 protected:
 
   GenericImageData();
@@ -309,6 +314,9 @@ protected:
 
   // The display to anatomy transformation, which is stored by this object
   IRISDisplayGeometry m_DisplayGeometry;
+
+  // Image annotations - these are distinct from segmentations
+  SmartPtr<ImageAnnotationData> m_Annotations;
 
   friend class SNAPImageData;
   friend class LayerIterator;
