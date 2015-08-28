@@ -449,6 +449,14 @@ void GenericSliceModel::CenterViewOnCursor()
   this->SetViewPositionRelativeToCursor(offset);
 }
 
+void GenericSliceModel::SetViewZoom(float zoom)
+{
+  assert(zoom > 0);
+  m_ViewZoom = zoom;
+  this->Modified();
+  this->InvokeEvent(SliceModelGeometryChangeEvent());
+}
+
 void GenericSliceModel::ZoomInOrOut(float factor)
 {
   float oldzoom = m_ViewZoom;
@@ -770,7 +778,7 @@ void GenericSliceModel::UpdateViewportLayout()
   // the behavior of the display
   int n_base_layers = dlm->GetNumberOfGroundLevelLayersModel()->GetValue();
 
-  // Get the dimensions of the main viewport
+  // Get the dimensions of the main viewport (in real pixels, not logical pixels)
   unsigned int w = m_SizeReporter->GetViewportSize()[0];
   unsigned int h = m_SizeReporter->GetViewportSize()[1];
 

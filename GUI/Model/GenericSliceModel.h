@@ -223,7 +223,7 @@ public:
 
   /** Set the zoom factor (number of pixels on the screen per millimeter in
    * image space */
-  irisSetWithEventMacro(ViewZoom, float, SliceModelGeometryChangeEvent)
+  void SetViewZoom(float zoom);
 
   /**
    * Zoom in/out by a specified factor. This method will 'stop' at the optimal
@@ -404,7 +404,8 @@ protected:
   // least in default zoom
   unsigned int m_Margin;
 
-  // The position and size of the zoom thumbnail
+  // The position and size of the zoom thumbnail. These are in real pixel
+  // units on retina screens, not logical pixels.
   Vector2i m_ZoomThumbnailPosition, m_ZoomThumbnailSize;
 
   // The zoom level in the thumbnail
