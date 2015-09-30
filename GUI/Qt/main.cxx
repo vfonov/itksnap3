@@ -529,6 +529,11 @@ int main(int argc, char *argv[])
   Q_INIT_RESOURCE(SNAPResources);
   Q_INIT_RESOURCE(TestingScripts);
 
+  // Force use of native OpenGL, since all of our functions and VTK use native
+  // and cannot use ANGLE
+  // TODO: we haven't proven that this actually helps with anything so hold off..
+  // app.setAttribute(Qt::AA_UseDesktopOpenGL);
+
   // Set the application style
   app.setStyle(QStyleFactory::create(argdata.style.c_str()));
 
