@@ -57,11 +57,11 @@ endforeach()
 SET(SNAP_VERSION_MAJOR 3)
 SET(SNAP_VERSION_MINOR 4)
 SET(SNAP_VERSION_PATCH 0)
-SET(SNAP_VERSION_QUALIFIER "-beta")
+SET(SNAP_VERSION_QUALIFIER "-rc1")
 
 # These fields should also be modified each time
-SET(SNAP_VERSION_RELEASE_DATE "20150826")
-SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Aug 26, 2015")
+SET(SNAP_VERSION_RELEASE_DATE "20151007")
+SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Oct 7, 2015")
 
 # This field should only change when the format of the settings files changes
 # in a non backwards-compatible way
@@ -134,7 +134,7 @@ IF(CMAKE_SYSTEM_NAME MATCHES Darwin)
 
   # TODO: when CMAKE_OSX_ARCHITECTURES is not set this causes an obscure
   # CMake error. Should generate a meaningful message instead
-  STRING(REPLACE ";" "-" ARCH ${CMAKE_OSX_ARCHITECTURES})
+  STRING(REPLACE ";" "-" ARCH "${CMAKE_OSX_ARCHITECTURES}")
   SET(CPACK_SYSTEM_NAME "MacOS-${ARCH}")
   MESSAGE(STATUS "   ARCH ${ARCH}")
   MESSAGE(STATUS "   CMAKE_OSX_ARCHITECTURES ${CMAKE_OSX_ARCHITECTURES}")
