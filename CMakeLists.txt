@@ -123,7 +123,7 @@ ENDIF( BUILD_OUTSIDE_INSIGHT_APPLICATIONS )
 #--------------------------------------------------------------------------------
 # *** THIS CODE MUST APPEAR BEFORE CALLING CONFIGURE_FILE on SNAPCommon.cxx ***
 #--------------------------------------------------------------------------------
-
+SET(CPACK_PACKAGE_NAME "itksnap")
 SET(CPACK_SOURCE_PACKAGE_FILE_NAME "itksnap-${SNAP_VERSION_FULL}-${SNAP_VERSION_RELEASE_DATE}")
 IF (CMAKE_SYSTEM_PROCESSOR MATCHES "unknown")
   EXEC_PROGRAM(uname ARGS "-m" OUTPUT_VARIABLE CMAKE_SYSTEM_PROCESSOR)
