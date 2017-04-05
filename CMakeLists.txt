@@ -892,12 +892,6 @@ SET(SNAP_VTK_LIBS
   vtkRenderingVolume
   vtkRenderingVolumeOpenGL
   vtkFiltersCore
-  # FIX
-  vtkIOMPIImage
-  vtkIOMPIParallel
-  vtkRenderingFreeTypeFontConfig
-  vtkRenderingMatplotlib
-  #
   vtkImagingCore
   vtkViewsCore
   vtkViewsContext2D
