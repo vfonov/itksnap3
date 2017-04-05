@@ -277,8 +277,8 @@ SET(LOGIC_HEADERS
   Common/ITKExtras/itkBSplineScatteredDataPointSetToImageFilter.txx
   Common/ITKExtras/itkBinaryDiamondStructuringElement.h
   Common/ITKExtras/itkBinaryDiamondStructuringElement.txx
-  Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.h
-  Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.txx
+#   Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.h
+#   Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.txx
   Common/ITKExtras/itkMorphologicalContourInterpolator.h
   Common/ITKExtras/itkMorphologicalContourInterpolator.hxx
   Common/ITKExtras/itkParallelSparseFieldLevelSetImageFilterBugFix.h
@@ -952,7 +952,6 @@ SET(SNAP_EXTERNAL_LIBS
   ${SNAP_VTK_LIBS} 
   ${SNAP_SYSTEM_LIBS}
 )
-
 #--------------------------------------------------------------------------------
 # Include C3D Library as submodule
 #--------------------------------------------------------------------------------
