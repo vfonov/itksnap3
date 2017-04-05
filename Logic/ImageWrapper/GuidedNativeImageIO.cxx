@@ -50,6 +50,7 @@
 #include "itkNiftiImageIO.h"
 #include "itkSiemensVisionImageIO.h"
 #include "itkVTKImageIO.h"
+#include "itkMINCImageIO.h"
 #include "itkVoxBoCUBImageIO.h"
 #include "itkImageFileReader.h"
 #include "itkImageFileWriter.h"
@@ -90,6 +91,7 @@ GuidedNativeImageIO
   {"Siemens Vision", "ima",          false, false, true,  true},
   {"VoxBo CUB", "cub,cub.gz",        true,  false, true,  true},
   {"VTK Image", "vtk",               true,  false, true,  true},
+  {"MINC1/2", "mnc,mnc.gz,minc,minc.gz", true,  true,  true,  true},
   {"INVALID FORMAT", "",             false, false, false, false}};
 
 
@@ -390,6 +392,7 @@ GuidedNativeImageIO
     case FORMAT_VOXBO_CUB:  m_IOBase = itk::VoxBoCUBImageIO::New();      break;
     case FORMAT_DICOM_DIR:
     case FORMAT_DICOM_FILE: m_IOBase = itk::GDCMImageIO::New();          break;
+    case FORMAT_MINC:       m_IOBase = itk::MINCImageIO::New();          break;
     case FORMAT_RAW:
       {
       // Get the Raw header sub-folder

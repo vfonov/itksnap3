@@ -10,6 +10,7 @@ PROJECT(SNAP)
 # CMAKE PRELIMINARIES                       
 #--------------------------------------------------------------------------------
 cmake_minimum_required(VERSION 2.8.12)
+CMAKE_POLICY(SET CMP0026 OLD)
 
 IF(POLICY CMP0026)
   cmake_policy(SET CMP0026 OLD)
@@ -56,7 +57,7 @@ endforeach()
 SET(SNAP_VERSION_MAJOR 3)
 SET(SNAP_VERSION_MINOR 6)
 SET(SNAP_VERSION_PATCH 0)
-SET(SNAP_VERSION_QUALIFIER "")
+SET(SNAP_VERSION_QUALIFIER "-minc")
 
 # These fields should also be modified each time
 SET(SNAP_VERSION_RELEASE_DATE "20170401")
@@ -162,6 +163,9 @@ MESSAGE(STATUS "   CPACK_PACKAGE_FILE_NAME ${CPACK_PACKAGE_FILE_NAME}")
 
 # Additional CPack resources
 SET(CPACK_RESOURCE_FILE_LICENSE "${SNAP_SOURCE_DIR}/COPYING")
+# FIXes to make DEB package
+SET(CPACK_PACKAGE_CONTACT "vladimir.fonov@gmail.com")
+
 
 #--------------------------------------------------------------------------------
 # SOURCE FILE SPECIFICATION                 
