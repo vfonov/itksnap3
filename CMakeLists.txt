@@ -152,6 +152,9 @@ MESSAGE(STATUS "   CPACK_PACKAGE_FILE_NAME ${CPACK_PACKAGE_FILE_NAME}")
 
 # Additional CPack resources
 SET(CPACK_RESOURCE_FILE_LICENSE "${SNAP_SOURCE_DIR}/COPYING")
+# FIXes to make DEB package
+SET(CPACK_PACKAGE_CONTACT "vladimir.fonov@gmail.com")
+
 
 #--------------------------------------------------------------------------------
 # SOURCE FILE SPECIFICATION                 
