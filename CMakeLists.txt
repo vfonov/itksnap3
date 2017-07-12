@@ -56,8 +56,8 @@ endforeach()
 # These four fields should be modified when versions change
 SET(SNAP_VERSION_MAJOR 3)
 SET(SNAP_VERSION_MINOR 6)
-SET(SNAP_VERSION_PATCH 0)
-SET(SNAP_VERSION_QUALIFIER "")
+SET(SNAP_VERSION_PATCH 2)
+SET(SNAP_VERSION_QUALIFIER "-alpha")
 
 # These fields should also be modified each time
 SET(SNAP_VERSION_RELEASE_DATE "20170401")
@@ -190,6 +190,7 @@ SET(LOGIC_CXX
   ${SNAP_BINARY_DIR}/SNAPCommon.cxx
   Common/AbstractModel.cxx
   Common/AbstractPropertyContainerModel.cxx
+  Common/ColorLabelPropertyModel.cxx
   Common/CommandLineArgumentParser.cxx
   Common/EventBucket.cxx
   Common/HistoryManager.cxx
@@ -197,6 +198,7 @@ SET(LOGIC_CXX
   Common/IRISException.cxx
   Common/Rebroadcaster.cxx
   Common/Registry.cxx
+  Common/SNAPEvents.cxx
   Common/SNAPOpenGL.cxx
   Common/SystemInterface.cxx
   Common/ThreadSpecificData.cxx
@@ -264,6 +266,7 @@ SET(LOGIC_HEADERS
   ${SNAP_BINARY_DIR}/GPUSettings.h
   Common/AbstractModel.h
   Common/AbstractPropertyContainerModel.h
+  Common/ColorLabelPropertyModel.h
   Common/CommandLineArgumentParser.h
   Common/Credits.h
   Common/HistoryManager.h
@@ -408,7 +411,6 @@ SET(LOGIC_HEADERS
 SET(UI_GENERIC_CXX
   GUI/Model/AnnotationModel.cxx
   GUI/Model/ColorLabelQuickListModel.cxx
-  GUI/Model/ColorLabelPropertyModel.cxx
   GUI/Model/ColorMapModel.cxx
   GUI/Model/CursorInspectionModel.cxx
   GUI/Model/DisplayLayoutModel.cxx
@@ -482,7 +484,6 @@ SET(UI_GENERIC_HEADERS
   GUI/Model/AnnotationModel.h
   GUI/Model/ColorMapModel.h
   GUI/Model/ColorLabelQuickListModel.h
-  GUI/Model/ColorLabelPropertyModel.h
   GUI/Model/CursorInspectionModel.h
   GUI/Model/DisplayLayoutModel.h
   GUI/Model/Generic3DModel.h
@@ -1143,6 +1144,13 @@ add_test(NAME SlicingPerformanceTestZ150 COMMAND itkTestDriver
         ${TEMP}/Z150.mha
         Z 150 irisRLE
 )
+
+# This test basically checks whether we can build using the logic library onlu
+ADD_EXECUTABLE(logic_api_test
+    Testing/Logic/IRISApplicationTest.cxx)
+TARGET_LINK_LIBRARIES(logic_api_test ${ITK_LIBRARIES} itksnaplogic)
+
+add_test(NAME IRISApplicationTest COMMAND logic_api_test)
 
 # Set up a test for each GUI test
 FOREACH(GUI_TEST ${GUI_TESTS})
