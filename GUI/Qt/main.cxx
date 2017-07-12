@@ -1,7 +1,20 @@
 #include <QApplication>
 #include <QSettings>
+#include <QAction>
+#include <QShortcutEvent>
+#include <QStyleFactory>
+#include <QUrl>
+#include <QDir>
+#include <QFileSystemWatcher>
+
+#if QT_VERSION > 0x050000
+#include <QSurfaceFormat>
+#endif
+
+#include "SNAPQApplication.h"
 #include "MainImageWindow.h"
 #include "SliceViewPanel.h"
+#include "ImageIODelegates.h"
 #include "IRISException.h"
 #include "IRISApplication.h"
 #include "SNAPAppearanceSettings.h"
@@ -12,6 +25,8 @@
 #include "QtIPCManager.h"
 #include "QtCursorOverride.h"
 #include "SNAPQtCommon.h"
+#include "SNAPTestQt.h"
+#include "TestOpenGLDialog.h"
 
 #include "GenericSliceView.h"
 #include "GenericSliceModel.h"
@@ -23,14 +38,9 @@
 #include "itkCommand.h"
 #include "vtkObject.h"
 
-#include <QStyleFactory>
-#include <QAction>
-#include <QUrl>
-
-#include "ImageIODelegates.h"
-
 #include <iostream>
-#include "SNAPTestQt.h"
+#include <clocale>
+#include <cstdlib>
 
 using namespace std;
 
@@ -60,6 +70,7 @@ void SetupSignalHandlers()
   signal(SIGSEGV, SegmentationFaultHandler);
 }
 
+
 #else
 
 void SetupSignalHandlers()
@@ -68,6 +79,34 @@ void SetupSignalHandlers()
 }
 
 #endif
+
+
+
+// Setting environment variables
+
+#ifdef WIN32
+
+template<typename TVal>
+void itksnap_putenv(const std::string &var, TVal value)
+{
+  std::ostringstream s;
+  s << var << "=" << value;
+  _putenv(s.str().c_str());
+}
+
+#else
+
+template<typename TVal>
+void itksnap_putenv(const std::string &var, TVal value)
+{
+  std::ostringstream s;
+  s << value;
+  setenv(var.c_str(), s.str().c_str(), 1);
+}
+
+#endif
+
+
 
 
 /*
@@ -81,85 +120,7 @@ void SetupSignalHandlers()
 #include <QTime>
 #include <QMessageBox>
 
-/** Class to handle exceptions in Qt callbacks */
-class SNAPQApplication : public QApplication
-{
-public:
-  SNAPQApplication(int &argc, char **argv) :
-    QApplication(argc, argv)
-    {
-    this->setApplicationName("ITK-SNAP");
-    this->setOrganizationName("itksnap.org");
 
-#if QT_VERSION >= 0x050000
-    // Allow @x2 pixmaps for icons for retina displays
-    this->setAttribute(Qt::AA_UseHighDpiPixmaps, true);
-#endif
-
-    m_MainWindow = NULL;
-
-    // Store the command-line arguments
-    for(int i = 1; i < argc; i++)
-      m_Args.push_back(QString::fromUtf8(argv[i]));
-  }
-
-  void setMainWindow(MainImageWindow *mainwin)
-  {
-    m_MainWindow = mainwin;
-    m_StartupTime = QTime::currentTime();
-  }
-
-  bool notify(QObject *object, QEvent *event)
-  {
-    try { return QApplication::notify(object, event); }
-    catch(std::exception &exc)
-    {
-      // Crash!
-      ReportNonLethalException(NULL, exc, "Unexpected Error",
-                               "ITK-SNAP has crashed due to an unexpected error");
-
-      // Exit the application
-      QApplication::exit(-1);
-
-      return false;
-    }
-  }
-
-
-  virtual bool event(QEvent *event)
-  {
-    if (event->type() == QEvent::FileOpen && m_MainWindow)
-      {
-      QFileOpenEvent *openEvent = static_cast<QFileOpenEvent *>(event);
-      QString file = openEvent->url().path();
-
-      // MacOS bug - we get these open document events automatically generated
-      // from command-line parameters, and I have no idea why. To avoid this,
-      // if the event occurs at startup (within a second), we will check if
-      // the passed in URL matches the command-line arguments, and ignore it
-      // if it does
-      if(m_StartupTime.secsTo(QTime::currentTime()) < 1)
-        {
-        foreach(const QString &arg, m_Args)
-          {
-          if(arg == file)
-            return true;
-          }
-        }
-
-      // Ok, we passed the check, now it's safe to actually open the file
-      m_MainWindow->raise();
-      m_MainWindow->LoadDroppedFile(file);
-      return true;
-      }
-    else return QApplication::event(event);
-  }
-
-private:
-  MainImageWindow *m_MainWindow;
-  QStringList m_Args;
-  QTime m_StartupTime;
-};
 
 
 #ifdef SNAP_DEBUG_EVENTS
@@ -182,6 +143,8 @@ void usage(const char *progname)
   cout << "Additional Options:" << endl;
   cout << "   -z FACTOR            : Specify initial zoom in screen pixels/mm" << endl;
   cout << "   --cwd PATH           : Start with PATH as the initial directory" << endl;
+  cout << "   --threads N          : Limit maximum number of CPU cores used to N." << endl;
+  cout << "   --scale N            : Scale all GUI elements by factor of N (e.g., 2)." << endl;
   cout << "Debugging/Testing Options:" << endl;
 #ifdef SNAP_DEBUG_EVENTS
   cout << "   --debug-events       : Dump information regarding UI events" << endl;
@@ -190,6 +153,9 @@ void usage(const char *progname)
   cout << "   --test TESTID        : Execute a test. " << endl;
   cout << "   --testdir DIR        : Set the root directory for tests. " << endl;
   cout << "   --testacc factor     : Adjust the interval between test commands by factor (e.g., 0.5). " << endl;
+  cout << "   --css file           : Read stylesheet from file." << endl;
+  cout << "   --opengl MAJOR MINOR : Set the OpenGL major and minor version. Experimental." << endl;
+  cout << "   --testgl             : Diagnose OpenGL/VTK issues." << endl;
   cout << "Platform-Specific Options:" << endl;
 #if QT_VERSION < 0x050000
 #ifdef Q_WS_X11
@@ -234,17 +200,29 @@ public:
   std::string cwd;
 
   // GUI related
-  std::string style;
+  std::string style, cssfile;
+
+  // OpenGL version preferred
+  int opengl_major, opengl_minor;
+  bool flagTestOpenGL;
+
+  // Number of threads
+  int nThreads;
+
+  // GUI scaling
+  int nDevicePixelRatio;
 
   CommandLineRequest()
     : flagDebugEvents(false), flagNoFork(false), flagConsole(false), xZoomFactor(0.0),
-      flagX11DoubleBuffer(false)
+      flagX11DoubleBuffer(false), nThreads(0), nDevicePixelRatio(0), flagTestOpenGL(false)
     {
 #if QT_VERSION >= 0x050000
     style = "fusion";
 #else
     style = "plastique";
 #endif
+    opengl_major = 1;
+    opengl_minor = 3;
     }
 };
 
@@ -346,6 +324,10 @@ int parse(int argc, char *argv[], CommandLineRequest &argdata)
   parser.AddOption("--testdir", 1);
   parser.AddOption("--testacc", 1);
 
+  // Restrict number of threads
+  // TODO: use and document this
+  parser.AddOption("--threads", 1);
+
   // Current working directory
   parser.AddOption("--cwd", 1);
 
@@ -358,6 +340,14 @@ int parse(int argc, char *argv[], CommandLineRequest &argdata)
   parser.AddOption("--style", 1);
 
   parser.AddOption("--x11-db",0);
+
+  parser.AddOption("--css", 1);
+
+  parser.AddOption("--scale", 1);
+
+  parser.AddOption("--opengl", 2);
+
+  parser.AddOption("--testgl", 0);
 
   // Obtain the result
   CommandLineArgumentParseResult parseResult;
@@ -516,16 +506,41 @@ int parse(int argc, char *argv[], CommandLineRequest &argdata)
   if(parseResult.IsOptionPresent("--style"))
     argdata.style = parseResult.GetOptionParameter("--style");
 
+  if(parseResult.IsOptionPresent("--css"))
+    argdata.cssfile = parseResult.GetOptionParameter("--css");
+
+  if(parseResult.IsOptionPresent("--opengl"))
+    {
+    argdata.opengl_major = atoi(parseResult.GetOptionParameter("--opengl", 0));
+    argdata.opengl_minor = atoi(parseResult.GetOptionParameter("--opengl", 1));
+    }
+
+  if(parseResult.IsOptionPresent("--testgl"))
+    argdata.flagTestOpenGL = true;
+
+
   // Enable double buffering on X11
-  if(parseResult.IsOptionPresent("x11-db"))
+  if(parseResult.IsOptionPresent("--x11-db"))
     argdata.flagX11DoubleBuffer = true;
+
+  // Number of threads
+  if(parseResult.IsOptionPresent("--threads"))
+    argdata.nThreads = atoi(parseResult.GetOptionParameter("--threads"));
+
+  // Number of threads
+  if(parseResult.IsOptionPresent("--scale"))
+    argdata.nDevicePixelRatio = atoi(parseResult.GetOptionParameter("--scale"));
 
   return 0;
 }
 
 
-
-#include <QDir>
+int test_opengl()
+{
+  TestOpenGLDialog *dialog = new TestOpenGLDialog();
+  dialog->show();
+  return QApplication::exec();
+}
 
 int main(int argc, char *argv[])
 {  
@@ -550,6 +565,66 @@ int main(int argc, char *argv[])
   // if(argdata.flagNoFork)
   //  sleep(60);
 
+
+
+#if QT_VERSION > 0x050000
+
+  // Starting with Qt 5.6, the OpenGL implementation uses OpenGL 2.0
+  // In this version of OpenGL, transparency is handled differently and
+  // looks wrong.
+  QSurfaceFormat gl_fmt;
+  gl_fmt.setMajorVersion(argdata.opengl_major);
+  gl_fmt.setMinorVersion(argdata.opengl_minor);
+  /*
+  gl_fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
+  gl_fmt.setRedBufferSize(1);
+  gl_fmt.setGreenBufferSize(1);
+  gl_fmt.setBlueBufferSize(1);
+  gl_fmt.setDepthBufferSize(1);
+  gl_fmt.setStencilBufferSize(0);
+  gl_fmt.setAlphaBufferSize(0);
+  */
+
+  QSurfaceFormat::setDefaultFormat(gl_fmt);
+
+#endif
+
+#if QT_VERSION > 0x050400
+
+  // Environment variable for the scale factor
+  const char *QT_SCALE_FACTOR = "QT_SCALE_FACTOR";
+  const char *QT_SCALE_AUTO_VAR = "QT_AUTO_SCREEN_SCALE_FACTOR";
+  const char *QT_SCALE_AUTO_VALUE = "1";
+
+#else
+
+  const char *QT_SCALE_FACTOR = "QT_DEVICE_PIXEL_RATIO";
+  const char *QT_SCALE_AUTO_VAR = "QT_DEVICE_PIXEL_RATIO";
+  const char *QT_SCALE_AUTO_VALUE = "auto";
+
+#endif
+
+  /* -----------------------------
+   * DEAL WITH PIXEL RATIO SCALING
+   * ----------------------------- */
+
+  // Read the pixel ratio from environment or command line
+  int devicePixelRatio = 0;
+  if(argdata.nDevicePixelRatio > 0)
+    devicePixelRatio = argdata.nDevicePixelRatio;
+  else if(getenv("ITKSNAP_SCALE_FACTOR"))
+    devicePixelRatio = atoi(getenv("ITKSNAP_SCALE_FACTOR"));
+
+  // Set the environment variable
+  if(devicePixelRatio > 0)
+    {
+    itksnap_putenv(QT_SCALE_FACTOR,devicePixelRatio);
+    }
+  else
+    {
+    itksnap_putenv(QT_SCALE_AUTO_VAR, QT_SCALE_AUTO_VALUE);
+    }
+
   // Turn off event debugging if needed
 #ifdef SNAP_DEBUG_EVENTS
   flag_snap_debug_events = argdata.flagDebugEvents;
@@ -557,6 +632,10 @@ int main(int argc, char *argv[])
 
   // Setup crash signal handlers
   SetupSignalHandlers();
+
+  // Deal with threads
+  if(argdata.nThreads > 0)
+    itk::MultiThreader::SetGlobalMaximumNumberOfThreads(argdata.nThreads);
 
   // Turn off ITK and VTK warning windows
   itk::Object::GlobalWarningDisplayOff();
@@ -570,10 +649,15 @@ int main(int argc, char *argv[])
   Q_INIT_RESOURCE(SNAPResources);
   Q_INIT_RESOURCE(TestingScripts);
 
+
+  // Reset the locale to posix to avoid weird issues with NRRD files
+  std::setlocale(LC_NUMERIC, "POSIX");
+
   // Force use of native OpenGL, since all of our functions and VTK use native
   // and cannot use ANGLE
   // TODO: we haven't proven that this actually helps with anything so hold off..
   // app.setAttribute(Qt::AA_UseDesktopOpenGL);
+
 
   // Set the application style
   app.setStyle(QStyleFactory::create(argdata.style.c_str()));
@@ -582,6 +666,12 @@ int main(int argc, char *argv[])
     QPalette fpal(QColor(232,232,232));
     fpal.setColor(QPalette::Normal, QPalette::Highlight, QColor(70, 136, 228));
     app.setPalette(fpal);
+    }
+
+  // Test OpenGL?
+  if(argdata.flagTestOpenGL)
+    {
+    return test_opengl();
     }
 
   // Before we can create any of the framework classes, we need to get some
@@ -630,6 +720,15 @@ int main(int argc, char *argv[])
     // Create the main window
     MainImageWindow *mainwin = new MainImageWindow();
     mainwin->Initialize(gui);
+
+    // Load stylesheet
+    if(argdata.cssfile.size())
+      {
+      QFileSystemWatcher *watcher = new QFileSystemWatcher(mainwin);
+      watcher->addPath(from_utf8(argdata.cssfile));
+      QObject::connect(watcher, SIGNAL(fileChanged(QString)),
+              mainwin, SLOT(externalStyleSheetFileChanged(QString)));
+      }
 
     // Disable double buffering in X11 to avoid flickering issues. The documentation
     // says this only happens on X11. For the time being, we are only implementing this

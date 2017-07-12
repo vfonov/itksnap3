@@ -48,16 +48,13 @@ protected:
   GenericSliceRenderer *m_ParentRenderer;
 };
 
-struct OpenGLTextureAssociationFactory
-{
-  typedef OpenGLSliceTexture<ImageWrapperBase::DisplayPixelType> Texture;
-  Texture *New(ImageWrapperBase *layer);
-  GenericSliceRenderer *m_Renderer;
-};
-
 class GenericSliceRenderer : public AbstractRenderer
 {
 public:
+
+  // texture type
+  typedef OpenGLSliceTexture<ImageWrapperBase::DisplayPixelType> Texture;
+
 
   irisITKObjectMacro(GenericSliceRenderer, AbstractModel)
 
@@ -77,6 +74,16 @@ public:
   /** This flag is on while the layer thumbnail is being painted */
   irisIsMacro(DrawingLayerThumbnail)
 
+  // Viewport object
+  typedef SliceViewportLayout::SubViewport ViewportType;
+
+  /**
+   * Get a pointer to the viewport that is currently being drawn, or
+   * NULL if a viewport is not being drawn
+   */
+  const ViewportType *GetDrawingViewport() const;
+
+
   typedef std::list<SliceRendererDelegate *> RendererDelegateList;
 
   // Get a reference to the list of overlays stored in here
@@ -93,12 +100,14 @@ public:
   RendererDelegateList &GetTiledOverlays()
     { return m_TiledOverlays; }
 
-  // This method can be used by the renderer delegates to draw a texture
-  void DrawTextureForLayer(ImageWrapperBase *layer, bool use_transparency);
-
   // A callback for when the model is reinitialized
   // void OnModelReinitialize();
 
+  // Get (creating if necessary) and configure the texture for a given layer
+  Texture *GetTextureForLayer(ImageWrapperBase *iw);
+
+  // Set list of child renderers
+  void SetChildRenderers(std::list<AbstractRenderer *> renderers);
 
 protected:
 
@@ -107,17 +116,22 @@ protected:
 
   void OnUpdate();
 
-  void DrawMainTexture();
   void DrawSegmentationTexture();
   void DrawOverlayTexture();
   void DrawThumbnail();
   void DrawTiledOverlays();
   void DrawGlobalOverlays();
 
+
   // Draw the image and overlays either on top of each other or separately
   // in individual cells. Returns true if a layer was drawn, false if not,
   // i.e., the cell is outside of the range of available layers
-  bool DrawImageLayers(ImageWrapperBase *base_layer, bool drawStickes);
+  bool DrawImageLayers(
+      ImageWrapperBase *base_layer,
+      const ViewportType &vp);
+
+  // This method can be used by the renderer delegates to draw a texture
+  void DrawTextureForLayer(ImageWrapperBase *layer, const ViewportType &vp, bool use_transparency);
 
   bool IsTiledMode() const;
 
@@ -126,27 +140,16 @@ protected:
   // Whether rendering to thumbnail or not
   bool m_DrawingZoomThumbnail, m_DrawingLayerThumbnail;
 
-  // A dynamic association between various image layers and texture objects
-  typedef OpenGLSliceTexture<ImageWrapperBase::DisplayPixelType> Texture;
-  typedef LayerAssociation<Texture, ImageWrapperBase,
-                           OpenGLTextureAssociationFactory> TextureMap;
-
-  TextureMap m_Texture;
+  // The index of the viewport that is currently being drawn - for use in child renderers
+  int m_DrawingViewportIndex;
 
   // A list of overlays that the user can configure
   RendererDelegateList m_TiledOverlays, m_GlobalOverlays;
 
-  // Internal method used by UpdateTextureMap()
-  // void AssociateTexture(ImageWrapperBase *iw, TextureMap &src, TextureMap &trg);
+  // List of child renderers
+  std::list<AbstractRenderer *>m_ChildRenderers;
 
-  // Texture factory method
-  Texture *CreateTexture(ImageWrapperBase *iw);
-
-
-  // Update the texture map to mirror the current images in the model
-  void UpdateTextureMap();
-
-  friend struct OpenGLTextureAssociationFactory;
+  Vector3d ComputeGridPosition(const Vector3d &disp_pix, const itk::Index<2> &slice_index, ImageWrapperBase *vecimg);
 };
 
 

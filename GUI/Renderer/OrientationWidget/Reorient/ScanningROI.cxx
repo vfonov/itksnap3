@@ -90,7 +90,7 @@ void ScanningROI::setPlanesNr(int anPlanesNr)
 
   int nI, nJ;
   
-  int nPlanesNr = m_arrpPairsPP_Axial.size();
+  int nPlanesNr = (int) m_arrpPairsPP_Axial.size();
   if(nPlanesNr != anPlanesNr)
     {
 
@@ -142,7 +142,7 @@ void ScanningROI::setPlanesNr(int anPlanesNr)
 
 int ScanningROI::getPlanesNr() const
 {
-  return(m_arrpPairsPP_Axial.size());
+  return (int) m_arrpPairsPP_Axial.size();
 }
 
 void ScanningROI::setSpacing(double adbX, double adbY, double adbZ)
@@ -174,11 +174,11 @@ void ScanningROI::Update()
     {
 	//m_pAxesWidget->GetAxesActor()->SetPosition(m_dbGraphicScale / 2.0, m_dbGraphicScale / 2.0, m_dbGraphicScale / 2.0);
 	
-	(*pMatrix4x4DirectionsAccompanying)[0][0] = -1.0;
-	(*pMatrix4x4DirectionsAccompanying)[1][1] = 0.0;
-	(*pMatrix4x4DirectionsAccompanying)[1][2] = -1.0;
-	(*pMatrix4x4DirectionsAccompanying)[2][1] = -1.0;
-	(*pMatrix4x4DirectionsAccompanying)[2][2] = 0.0;
+    pMatrix4x4DirectionsAccompanying->SetElement(0, 0, -1.0);
+    pMatrix4x4DirectionsAccompanying->SetElement(1, 1, 0.0);
+    pMatrix4x4DirectionsAccompanying->SetElement(1, 2, -1.0);
+    pMatrix4x4DirectionsAccompanying->SetElement(2, 1, -1.0);
+    pMatrix4x4DirectionsAccompanying->SetElement(2, 2, 0.0);
 
 	changeOrientation3x3(m_pMatrix4x4Directions);
 	m_pAxesWidget->SetLabels("i", "k", "j");
@@ -305,7 +305,7 @@ void ScanningROI::changeOrientation3x3(vtkSmartPointer < vtkMatrix4x4 > apvtkMat
     {
     for(nJ = 0; nJ < 3; nJ++)
   	  {
-  	  (*apvtkMatrix4x4)[nI][nJ] = - (*apvtkMatrix4x4)[nI][nJ];
+      apvtkMatrix4x4->SetElement(nI, nJ, apvtkMatrix4x4->GetElement(nI, nJ));
   	  }
     }
 }

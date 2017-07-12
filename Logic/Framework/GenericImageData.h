@@ -44,6 +44,7 @@
 #define __GenericImageData_h_
 
 #include "SNAPCommon.h"
+#include "RLEImageRegionIterator.h"
 #include "IRISException.h"
 #include "ImageWrapperTraits.h"
 #include <itkObject.h>
@@ -78,6 +79,7 @@ public:
   // Image type definitions
   typedef itk::ImageRegion<3> RegionType;
   typedef itk::ImageBase<3> ImageBaseType;
+  typedef SmartPtr<ImageBaseType> ImageBasePointer;
 
   /**
    * The type of anatomical images. For the time being, all anatomic images
@@ -97,6 +99,10 @@ public:
 
   // Segmentation undo support
   typedef UndoDataManager<LabelType> UndoManagerType;
+  typedef UndoManagerType::Delta     UndoManagerDelta;
+
+  // Transforms
+  typedef ImageWrapperBase::ITKTransformType ITKTransformType;
 
 
   /**
@@ -233,7 +239,7 @@ public:
    * Add an overlay that is obtained from the image referenced by *io by applying
    * a spatial transformation.
    */
-  void AddCoregOverlay(GuidedNativeImageIO *io);
+  void AddCoregOverlay(GuidedNativeImageIO *io, ITKTransformType *transform);
 
   /**
    * Change the ordering of the layers within a particular role (for now just
@@ -275,6 +281,14 @@ public:
   virtual void SetDisplayGeometry(const IRISDisplayGeometry &dispGeom);
 
   /**
+   * Get a pointer to the display viewport geometry object corresponding
+   * to viewports 0, 1 or 2. Viewport geometry is represented by an ImageBase
+   * object. When the display viewport changes, this should be updated so
+   * that the slices can be correctly generated in the ImageWrappers
+   */
+  virtual ImageBaseType *GetDisplayViewportGeometry(int index);
+
+  /**
    * Set the direction matrix of all the images
    */
   virtual void SetDirectionMatrix(const vnl_matrix<double> &direction);
@@ -285,11 +299,19 @@ public:
   /** Get the list of annotations created by the user */
   irisGetMacro(Annotations, ImageAnnotationData *)
 
-  /** TODO: in 3.6 this will be unnecessary */
-  UndoManagerType::Delta *GetCumulativeUndoDelta();
+  /**
+   * Store an intermediate delta without committing it as an undo point
+   * Multiple deltas can be stored and then committed with StoreUndoPoint()
+   */
+  void StoreIntermediateUndoDelta(UndoManagerDelta *delta);
 
-  /** Store an undo point */
-  void StoreUndoPoint(const char *text);
+  /**
+   * Store an undo point. The first parameter is the description of the
+   * update, and the second parameter is the delta to be applied. The delta
+   * can be NULL. All deltas previously submitted with StoreIntermediateUndoDelta
+   * and the delta passed in to this method will be commited to this undo point.
+   */
+  void StoreUndoPoint(const char *text, UndoManagerDelta *delta = NULL);
 
   /** Clear all undo points */
   void ClearUndoPoints();
@@ -344,14 +366,22 @@ protected:
   // The display to anatomy transformation, which is stored by this object
   IRISDisplayGeometry m_DisplayGeometry;
 
+  // The complete specification of each display viewport as a 3D image in the same anatomical
+  // space as the 3D images. This specification is used to sample images onto the viewport.
+  ImageBasePointer m_DisplayViewportGeometry[3];
+
   // Image annotations - these are distinct from segmentations
   SmartPtr<ImageAnnotationData> m_Annotations;
 
   friend class SNAPImageData;
   friend class LayerIterator;
 
-  // Create a wrapper (vector or scalar) from native format stored in the IO
-  SmartPtr<ImageWrapperBase> CreateAnatomicWrapper(GuidedNativeImageIO *io, bool sameSpaceAsMainWrapper);
+  // Create a wrapper (vector or scalar) from native format stored in the IO, with the
+  // specified transform. Null transform indicates that the wrapper is in the space space
+  // as the main wrapper
+  SmartPtr<ImageWrapperBase> CreateAnatomicWrapper(
+      GuidedNativeImageIO *io,
+      ITKTransformType *transform = NULL);
 
   // Update the main image
   virtual void SetMainImageInternal(ImageWrapperBase *wrapper);

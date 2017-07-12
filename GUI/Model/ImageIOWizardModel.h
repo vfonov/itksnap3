@@ -7,8 +7,6 @@
 #include "GuidedNativeImageIO.h"
 #include "Registry.h"
 #include "ImageIODelegates.h"
-#include "ImageRegistrationManager.h"
-#include "OptimizationProgressRenderer.h"
 
 class GlobalUIModel;
 
@@ -31,10 +29,6 @@ public:
 
   irisITKObjectMacro(ImageIOWizardModel, AbstractModel)
 
-  itkEventMacro(RegistrationProgressEvent, IRISEvent)
-
-  FIRES(RegistrationProgressEvent)
-
   typedef GuidedNativeImageIO::FileFormat FileFormat;
   enum Mode { LOAD, SAVE };
 
@@ -48,8 +42,7 @@ public:
   // using a smart pointer, so its ownership can be relinquished to the
   // wizard.
   void InitializeForLoad(GlobalUIModel *parent,
-                         AbstractLoadImageDelegate *delegate,
-                         const char *name, const char *dispName);
+                         AbstractLoadImageDelegate *delegate);
 
   void InitializeForSave(GlobalUIModel *parent,
                          AbstractSaveImageDelegate *delegate,
@@ -171,20 +164,29 @@ public:
   /**
     Load relevant information from DICOM directory
     */
-  void ProcessDicomDirectory(const std::string &filename);
+  void ProcessDicomDirectory(const std::string &filename, itk::Command *progressCommand);
 
   /**
-    Get the DICOM directory contents
-    */
-  irisGetMacro(DicomContents, const GuidedNativeImageIO::RegistryArray &)
+   * Get a list of loaded Dicom SeriesIDs. This can be called from the
+   * callback of progressCommand, allowing on the fly updates
+   */
+  std::list<std::string> GetFoundDicomSeriesIds();
+
+  /**
+   * Get the metadata for a single found series Id
+   */
+  Registry GetFoundDicomSeriesMetaData(const std::string &series_id);
 
   /**
     Load n-th series from DICOM directory
     */
-  void LoadDicomSeries(const std::string &filename, int series);
+  void LoadDicomSeries(const std::string &filename,
+                       const std::string &series_id);
 
 
   irisGetSetMacro(SuggestedFilename, std::string)
+
+  irisGetSetMacro(SuggestedFormat, GuidedNativeImageIO::FileFormat)
 
   /**
     Access the registry stored in the model and used for providing hints to
@@ -199,11 +201,6 @@ public:
   virtual void Finalize();
 
   /**
-   * Set whether the IO module should use registration
-   */
-  irisGetMacro(UseRegistration, bool)
-
-  /**
    * Is this an overlay?
    */
   irisIsMacro(Overlay)
@@ -213,41 +210,6 @@ public:
 
   /** Which is the colormap of the sticky overlay */
   irisSimplePropertyAccessMacro(StickyOverlayColorMap, std::string)
-
-  // Registration mode typedefs
-  typedef ImageRegistrationManager::RegistrationMode RegistrationMode;
-  typedef ImageRegistrationManager::RegistrationMetric RegistrationMetric;
-  typedef ImageRegistrationManager::RegistrationInit RegistrationInit;
-
-  // Registration domains
-  typedef SimpleItemSetDomain<RegistrationMode, std::string> RegistrationModeDomain;
-  typedef SimpleItemSetDomain<RegistrationMetric, std::string> RegistrationMetricDomain;
-  typedef SimpleItemSetDomain<RegistrationInit, std::string> RegistrationInitDomain;
-
-  // Access to registration models
-  irisGenericPropertyAccessMacro(RegistrationMode, RegistrationMode, RegistrationModeDomain)
-  irisGenericPropertyAccessMacro(RegistrationMetric, RegistrationMetric, RegistrationMetricDomain)
-  irisGenericPropertyAccessMacro(RegistrationInit, RegistrationInit, RegistrationInitDomain)
-
-  /**
-   * Perform registration between loaded overlay and main image. This operation is meant to
-   * be executed in a separate thread. From time to time, it will place the registration
-   * results into a thread-safe variable and fire a progress event. Use the method
-   * UpdateImageTransformFromRegistration() to apply registration results to the displayed image
-   */
-  void PerformRegistration();
-
-  /**
-   * Apply the currently computed transform to the image being loaded - allowing the user to
-   * see the registration results on the fly
-   */
-  void UpdateImageTransformFromRegistration();
-
-  /** Get the value of the registration objective function */
-  double GetRegistrationObjective();
-
-  /** Get the progress renderer object */
-  irisGetMacro(RegistrationProgressRenderer, OptimizationProgressRenderer *)
 
 protected:
 
@@ -280,14 +242,11 @@ protected:
   // Whether the layer being loaded is an overlay
   bool m_Overlay;
 
-  // Whether registration should be used to load this image
-  bool m_UseRegistration;
-
   // Suggested filename
   std::string m_SuggestedFilename;
 
-  // DICOM support
-  GuidedNativeImageIO::RegistryArray m_DicomContents;
+  // Suggested format
+  GuidedNativeImageIO::FileFormat m_SuggestedFormat;
 
   // Overlay display behavior models
   SmartPtr<AbstractSimpleBooleanProperty> m_StickyOverlayModel;
@@ -298,21 +257,6 @@ protected:
   SmartPtr<AbstractSimpleStringProperty> m_StickyOverlayColorMapModel;
   bool GetStickyOverlayColorMapValue(std::string &value);
   void SetStickyOverlayColorMapValue(std::string value);
-
-  // Registration models
-  typedef ConcretePropertyModel<RegistrationMode, RegistrationModeDomain> RegistrationModeModel;
-  typedef ConcretePropertyModel<RegistrationMetric, RegistrationMetricDomain> RegistrationMetricModel;
-  typedef ConcretePropertyModel<RegistrationInit, RegistrationInitDomain> RegistrationInitModel;
-
-  SmartPtr<RegistrationModeModel> m_RegistrationModeModel;
-  SmartPtr<RegistrationMetricModel> m_RegistrationMetricModel;
-  SmartPtr<RegistrationInitModel> m_RegistrationInitModel;
-
-  // Registration manager
-  SmartPtr<ImageRegistrationManager> m_RegistrationManager;
-
-  // Renderer used to plot the metric
-  SmartPtr<OptimizationProgressRenderer> m_RegistrationProgressRenderer;
 
   // Pointer to the image layer that has been loaded
   ImageWrapperBase *m_LoadedImage;

@@ -121,6 +121,7 @@ void QtProgressReporterDelegate::SetProgressDialog(QProgressDialog *dialog)
   m_Dialog->setMaximum(1000);
   m_Dialog->setWindowModality(Qt::WindowModal);
   m_Dialog->setLabelText("ITK-SNAP progress");
+  m_Dialog->reset();
 }
 
 #include <QDebug>
@@ -155,6 +156,14 @@ void QtSystemInfoDelegate
   region.SetSize(1, iq.height());
   image->SetRegions(region);
   image->Allocate();
+
+  GrayscaleImage::SpacingType spacing;
+  spacing.Fill(1.0);
+  image->SetSpacing(spacing);
+
+  GrayscaleImage::DirectionType direction;
+  direction.SetIdentity();
+  image->SetDirection(direction);
 
   // Fill the image buffer
   for(itk::ImageRegionIteratorWithIndex<GrayscaleImage> it(image, region);

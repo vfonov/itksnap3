@@ -49,6 +49,12 @@ ImageWrapperBase *LoadMainImageDelegate::UpdateApplicationWithImage(GuidedNative
   return m_Driver->GetIRISImageData()->GetMain();
 }
 
+LoadMainImageDelegate::LoadMainImageDelegate()
+{
+  this->m_HistoryName = "AnatomicImage";
+  this->m_DisplayName = "Main Image";
+}
+
 
 /* =============================
    OVERLAY Image
@@ -79,6 +85,9 @@ LoadOverlayImageDelegate
   // Do the parent's check
   LoadAnatomicImageDelegate::ValidateHeader(io, wl);
 
+  // The check below is commented out because we no longer require the overlays
+  // to be in the same space as the main image
+  /*
   // Now check for dimensions mismatch
   GenericImageData *id = m_Driver->GetCurrentImageData();
 
@@ -94,33 +103,13 @@ LoadOverlayImageDelegate
                         szSeg[0], szSeg[1], szSeg[2],
         szMain[0], szMain[1], szMain[2]);
     }
+  */
 }
 
-
-
-/* =============================
-   Co-Registered Overlay Image
-   ============================= */
-
-void
-LoadCoregisteredOverlayImageDelegate
-::UnloadCurrentImage()
+LoadOverlayImageDelegate::LoadOverlayImageDelegate()
 {
-}
-
-ImageWrapperBase *LoadCoregisteredOverlayImageDelegate::UpdateApplicationWithImage(GuidedNativeImageIO *io)
-{
-  m_Driver->AddIRISCoregOverlayImage(io, this->GetMetaDataRegistry());
-  return m_Driver->GetIRISImageData()->GetLastOverlay();
-}
-
-
-void
-LoadCoregisteredOverlayImageDelegate
-::ValidateHeader(GuidedNativeImageIO *io, IRISWarningList &wl)
-{
-  // Do the parent's check
-  LoadAnatomicImageDelegate::ValidateHeader(io, wl);
+  this->m_HistoryName = "AnatomicImage";
+  this->m_DisplayName = "Additional Image";
 }
 
 /* =============================
@@ -225,6 +214,12 @@ ImageWrapperBase *LoadSegmentationImageDelegate::UpdateApplicationWithImage(Guid
     m_Driver->UpdateIRISSegmentationImage(io);
 
   return m_Driver->GetCurrentImageData()->GetSegmentation();
+}
+
+LoadSegmentationImageDelegate::LoadSegmentationImageDelegate()
+{
+  this->m_HistoryName = "LabelImage";
+  this->m_DisplayName = "Segmentation Image";
 }
 
 void

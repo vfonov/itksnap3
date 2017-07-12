@@ -5,13 +5,15 @@
 #include "SystemInterface.h"
 #include "ImageCoordinateGeometry.h"
 #include <itksys/SystemTools.hxx>
-#include "HistoryManager.h"
+
 #include "ColorMap.h"
+#include "ImageIODelegates.h"
+#include "HistoryManager.h"
+#include "GenericImageData.h"
 
 #include "IRISException.h"
 #include <sstream>
 
-#include "ImageIODelegates.h"
 
 ImageIOWizardModel::ImageIOWizardModel()
 {
@@ -20,8 +22,10 @@ ImageIOWizardModel::ImageIOWizardModel()
   m_LoadDelegate = NULL;
   m_SaveDelegate = NULL;
   m_Overlay = false;
-  m_UseRegistration = false;
   m_LoadedImage = NULL;
+
+  // Suggested format is empty
+  m_SuggestedFormat = GuidedNativeImageIO::FORMAT_COUNT;
 
   // Initialize various property models
   m_StickyOverlayModel = wrapGetterSetterPairAsProperty(
@@ -33,37 +37,6 @@ ImageIOWizardModel::ImageIOWizardModel()
                                    this,
                                    &Self::GetStickyOverlayColorMapValue,
                                    &Self::SetStickyOverlayColorMapValue);
-
-  // Initialize the registration models
-
-  // Registration mode
-  RegistrationModeDomain reg_mode_domain;
-  reg_mode_domain[ImageRegistrationManager::RIGID] = "Rigid";
-  reg_mode_domain[ImageRegistrationManager::SIMILARITY] = "Rigid with uniform scaling";
-  reg_mode_domain[ImageRegistrationManager::AFFINE] = "Affine";
-  reg_mode_domain[ImageRegistrationManager::INITONLY] = "Initial alignment only";
-  m_RegistrationModeModel = NewConcreteProperty(ImageRegistrationManager::RIGID, reg_mode_domain);
-
-  // Registration metric
-  RegistrationMetricDomain reg_metric_domain;
-  reg_metric_domain[ImageRegistrationManager::NMI] = "Normalized mutual information";
-  reg_metric_domain[ImageRegistrationManager::NCC] = "Normalized cross-correlation";
-  reg_metric_domain[ImageRegistrationManager::SSD] = "Squared intensity difference";
-  m_RegistrationMetricModel = NewConcreteProperty(ImageRegistrationManager::NMI, reg_metric_domain);
-
-  // Registration initialization
-  RegistrationInitDomain reg_init_domain;
-  reg_init_domain[ImageRegistrationManager::HEADERS] = "Align based on image headers";
-  reg_init_domain[ImageRegistrationManager::CENTERS] = "Align image centers";
-  m_RegistrationInitModel = NewConcreteProperty(ImageRegistrationManager::HEADERS, reg_init_domain);
-
-  // Registration manager
-  m_RegistrationManager = ImageRegistrationManager::New();
-  Rebroadcast(m_RegistrationManager, itk::IterationEvent(), RegistrationProgressEvent());
-
-  // Optimization progress renderer
-  m_RegistrationProgressRenderer = OptimizationProgressRenderer::New();
-  m_RegistrationProgressRenderer->SetModel(this);
 }
 
 
@@ -81,7 +54,6 @@ ImageIOWizardModel
   m_LoadDelegate = NULL;
   m_SaveDelegate = delegate;
   m_SuggestedFilename = delegate->GetCurrentFilename();
-  m_UseRegistration = false;
   m_Overlay = false;
   m_LoadedImage = NULL;
 }
@@ -89,18 +61,15 @@ ImageIOWizardModel
 void
 ImageIOWizardModel
 ::InitializeForLoad(GlobalUIModel *parent,
-                    AbstractLoadImageDelegate *delegate,
-                    const char *name,
-                    const char *dispName)
+                    AbstractLoadImageDelegate *delegate)
 {
   m_Parent = parent;
   m_Mode = LOAD;
-  m_HistoryName = name;
-  m_DisplayName = dispName;
+  m_HistoryName = delegate->GetHistoryName();
+  m_DisplayName = delegate->GetDisplayName();
   m_GuidedIO = GuidedNativeImageIO::New();
   m_LoadDelegate = delegate;
   m_SaveDelegate = NULL;
-  m_UseRegistration = delegate->GetUseRegistration();
   m_Overlay = delegate->IsOverlay();
   m_LoadedImage = NULL;
 }
@@ -322,7 +291,7 @@ ImageIOWizardModel::FileFormat ImageIOWizardModel::GetSelectedFormat()
   return GuidedNativeImageIO::GetFileFormat(m_Registry);
 }
 
-#include "GenericImageData.h"
+
 
 void ImageIOWizardModel::LoadImage(std::string filename)
 {
@@ -361,6 +330,9 @@ void ImageIOWizardModel::LoadImage(std::string filename)
     regAssoc.Folder("Files.Grey").Update(m_Registry);
     si->AssociateRegistryWithFile(
           m_GuidedIO->GetFileNameOfNativeImage().c_str(), regAssoc);
+
+    // Also place the IO hints into the layer
+    m_LoadedImage->SetIOHints(m_Registry);
   }
   catch(IRISException &excIRIS)
   {
@@ -399,20 +371,16 @@ void ImageIOWizardModel::Reset()
   m_Registry.Clear();
 }
 
-void ImageIOWizardModel::ProcessDicomDirectory(const std::string &filename)
+void ImageIOWizardModel::ProcessDicomDirectory(const std::string &filename,
+                                               itk::Command *progressCommand)
 {
-  // Here is a request
-  GuidedNativeImageIO::DicomRequest req;
-  req.push_back(GuidedNativeImageIO::DicomRequestField(
-                  0x0020, 0x0011, "SeriesNumber"));
-
   // Get the directory
   std::string dir = GetBrowseDirectory(filename);
 
   // Get the registry
   try
   {
-    m_GuidedIO->ParseDicomDirectory(dir, m_DicomContents, req);
+    m_GuidedIO->ParseDicomDirectory(dir, progressCommand);
   }
   catch (IRISException &ei)
   {
@@ -425,13 +393,72 @@ void ImageIOWizardModel::ProcessDicomDirectory(const std::string &filename)
   }
 }
 
-void ImageIOWizardModel
-::LoadDicomSeries(const std::string &filename, int series)
+std::list<std::string>
+ImageIOWizardModel
+::GetFoundDicomSeriesIds()
 {
+  // Get the DICOM registry from the GuidedIO
+  typedef GuidedNativeImageIO::DicomDirectoryParseResult ParseResult;
+  const ParseResult &pr = m_GuidedIO->GetLastDicomParseResult();
+
+  std::list<std::string> result;
+  for(ParseResult::SeriesMapType::const_iterator it = pr.SeriesMap.begin();
+      it != pr.SeriesMap.end(); ++it)
+    result.push_back(it->first);
+
+  return result;
+}
+
+Registry
+ImageIOWizardModel
+::GetFoundDicomSeriesMetaData(const std::string &series_id)
+{
+  // Get the DICOM registry from the GuidedIO
+  typedef GuidedNativeImageIO::DicomDirectoryParseResult ParseResult;
+  const ParseResult &pr = m_GuidedIO->GetLastDicomParseResult();
+
+  // Registry result
+  Registry r;
+
+  // Find the metadata
+  ParseResult::SeriesMapType::const_iterator it = pr.SeriesMap.find(series_id);
+  if(it != pr.SeriesMap.end())
+    r.Update(it->second.MetaData);
+
+  return r;
+}
+
+void ImageIOWizardModel
+::LoadDicomSeries(const std::string &filename,
+                  const std::string &series_id)
+{
+  // Get the DICOM registry from the GuidedIO
+  typedef GuidedNativeImageIO::DicomDirectoryParseResult ParseResult;
+  const ParseResult &pr = m_GuidedIO->GetLastDicomParseResult();
+
+  // Get the metadata for the current series
+  ParseResult::SeriesMapType::const_iterator itc = pr.SeriesMap.find(series_id);
+  if(itc == pr.SeriesMap.end())
+    throw IRISException("DICOM series id %s not found, logic error",
+                        series_id.c_str());
+  Registry meta_current = itc->second.MetaData;
+
   // Set up the registry for DICOM IO
-  m_Registry["DICOM.SeriesId"] << m_DicomContents[series]["SeriesId"][""];
+  m_Registry["DICOM.SeriesId"] << meta_current["SeriesId"][""];
   m_Registry.Folder("DICOM.SeriesFiles").PutArray(
-        m_DicomContents[series].Folder("SeriesFiles").GetArray(std::string()));
+        meta_current.Folder("SeriesFiles").GetArray(std::string()));
+
+  // Store information about the entire dicom diretory into a separate subfolder.
+  // This is to allow subsequent quick loading of other DICOM series in the same
+  // directory, e.g., through a menu item on the main menu
+  m_Registry["DICOM.DirectoryInfo.ArraySize"] << pr.SeriesMap.size();
+  int i = 0;
+  for(ParseResult::SeriesMapType::const_iterator it = pr.SeriesMap.begin();
+      it != pr.SeriesMap.end(); ++it, ++i)
+    {
+    Registry &r = m_Registry.Folder(m_Registry.Key("DICOM.DirectoryInfo.Entry[%d]", i));
+    r.Update(it->second.MetaData);
+    }
 
   // Set the format to DICOM
   SetSelectedFormat(GuidedNativeImageIO::FORMAT_DICOM_DIR);
@@ -441,6 +468,13 @@ void ImageIOWizardModel
 
   // Call the main load method
   this->LoadImage(dir);
+
+  // DICOM filenames are meaningless. Assign a nickname based on series name
+  if(m_LoadedImage->GetCustomNickname().length() == 0)
+    {
+    m_LoadedImage->SetCustomNickname(meta_current["SeriesDescription"][""]);
+    }
+
 }
 
 unsigned long ImageIOWizardModel::GetFileSizeInBytes(const std::string &file)
@@ -456,26 +490,6 @@ bool ImageIOWizardModel::IsImageLoaded() const
 
 void ImageIOWizardModel::Finalize()
 {
-}
-
-void ImageIOWizardModel::PerformRegistration()
-{
-  m_RegistrationManager->PerformRegistration(m_Parent->GetDriver()->GetCurrentImageData(),
-                                             this->GetRegistrationMode(),
-                                             this->GetRegistrationMetric(),
-                                             this->GetRegistrationInit());
-}
-
-
-void ImageIOWizardModel::UpdateImageTransformFromRegistration()
-{
-  m_RegistrationManager->UpdateImageTransformFromRegistration(
-        m_Parent->GetDriver()->GetCurrentImageData());
-}
-
-double ImageIOWizardModel::GetRegistrationObjective()
-{
-  return m_RegistrationManager->GetRegistrationObjective();
 }
 
 bool ImageIOWizardModel::GetStickyOverlayValue(bool &value)

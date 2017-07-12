@@ -19,9 +19,11 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QTableWidget;
 class QSpinBox;
+class QDoubleSpinBox;
 class FileChooserPanelWithHistory;
 class OptimizationProgressRenderer;
 class QtVTKRenderWindowBox;
+class DICOMListingTable;
 
 // Helper classes in their own namespace, so I can use simple class names
 namespace imageiowiz
@@ -73,6 +75,10 @@ class SelectFilePage : public AbstractPage
 public:
   explicit SelectFilePage(QWidget *parent = 0);
 
+  // Externally set the filename
+  void SetFilename(const std::string &filename,
+                   GuidedNativeImageIO::FileFormat format);
+
   void initializePage();
   bool validatePage();
   // bool isComplete() const;
@@ -120,9 +126,16 @@ public:
   bool validatePage();
 
   bool isComplete() const;
+  void cleanupPage();
+
+public slots:
+
+  void processDicomDirectory();
+  void updateTable();
+
 private:
 
-  QTableWidget *m_Table;
+  DICOMListingTable *m_Table;
 };
 
 class RawPage : public AbstractPage
@@ -141,6 +154,7 @@ public slots:
 
 private:
   QSpinBox *m_Dims[3], *m_HeaderSize;
+  QDoubleSpinBox *m_Spacing[3];
   QComboBox *m_InFormat, *m_InEndian;
   QSpinBox *m_OutImpliedSize, *m_OutActualSize;
   unsigned long m_FileSize;
@@ -167,6 +181,9 @@ public:
   explicit ImageIOWizard(QWidget *parent = 0);
 
   void SetModel(ImageIOWizardModel *model);
+
+  void SetFilename(const std::string &filename,
+                   GuidedNativeImageIO::FileFormat format = GuidedNativeImageIO::FORMAT_COUNT);
 
   virtual int nextId() const;
 

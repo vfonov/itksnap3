@@ -54,20 +54,13 @@ OpenGLSliceTexture<TPixel>
 }
 
 template<class TPixel>
+void
 OpenGLSliceTexture<TPixel>
-::OpenGLSliceTexture(GLuint components, GLenum format)
+::SetDepth(GLuint components, GLenum format)
 {
-  // Set to -1 to force a call to 'generate'
-  m_IsTextureInitalized = false;
-
-  // Set the update time to -1
-  m_UpdateTime = 0;
-
   // Init the GL settings to uchar, luminance defautls, which are harmless
   m_GlComponents = components;
   m_GlFormat = format;
-  m_GlType = GL_UNSIGNED_BYTE;
-  m_InterpolationMode = GL_NEAREST;
 }
 
 template<class TPixel>
@@ -91,6 +84,7 @@ OpenGLSliceTexture<TPixel>
     }
 }
 
+#include "itkImageFileWriter.h"
 
 template<class TPixel>
 void
@@ -134,6 +128,10 @@ OpenGLSliceTexture<TPixel>
   glTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
   glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_InterpolationMode );
   glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_InterpolationMode );
+
+  // TODO: figure out how this can be applied in a fully compatible way
+  // glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+  // glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
 
   // Turn off modulo-4 rounding in GL
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -179,7 +177,9 @@ OpenGLSliceTexture<TPixel>
   double tx = w * 1.0 / m_TextureSize(0);
   double ty = h * 1.0 / m_TextureSize(1);
 
-  // Draw quad 
+  glPushMatrix();
+
+  // Draw quad
   glBegin(GL_QUADS);
   glTexCoord2d(0,0);
   glVertex2d(0,0);
@@ -191,9 +191,72 @@ OpenGLSliceTexture<TPixel>
   glVertex2d(w,0);
   glEnd();
 
+  glPopMatrix();
+
+  // Even though we use glPushAttrib, on some graphics cards, the texture bit remains set
+  glDisable(GL_TEXTURE_2D);
   glPopAttrib();
 }
 
+template<class TPixel>
+void
+OpenGLSliceTexture<TPixel>
+::DrawCheckerboard(int rows, int cols)
+{
+  // Update the texture
+  Update();
+
+  // Should have a texture number
+  assert(m_IsTextureInitalized);
+
+  // GL settings
+  glPushAttrib(GL_TEXTURE_BIT);
+  glEnable(GL_TEXTURE_2D);
+
+  // Select our texture
+  glBindTexture(GL_TEXTURE_2D,m_TextureIndex);
+
+  int w = m_Image->GetBufferedRegion().GetSize()[0];
+  int h = m_Image->GetBufferedRegion().GetSize()[1];
+  double tx = w * 1.0 / m_TextureSize(0);
+  double ty = h * 1.0 / m_TextureSize(1);
+
+  glPushMatrix();
+  glBegin(GL_QUADS);
+
+  // Repeat for each checkerboard
+  for(int iy = 0; iy < rows; iy++)
+    {
+    for(int ix = 0; ix < cols; ix++)
+      {
+      if((ix + iy) % 2 == 0)
+        {
+        double x0 = ix * 1.0 / cols;
+        double x1 = (ix + 1) * 1.0 / cols;
+        double y0 = iy * 1.0 / rows;
+        double y1 = (iy + 1) * 1.0 / rows;
+
+        // Draw quad
+        glTexCoord2d(x0 * tx, y0 * ty);
+        glVertex2d(x0 * w, y0 * h);
+        glTexCoord2d(x0 * tx, y1 * ty);
+        glVertex2d(x0 * w, y1 * h);
+        glTexCoord2d(x1 * tx, y1 * ty);
+        glVertex2d(x1 * w, y1 * h);
+        glTexCoord2d(x1 * tx, y0 * ty);
+        glVertex2d(x1 * w, y0 * h);
+        }
+      }
+    }
+
+  glEnd();
+  glPopMatrix();
+
+  // Even though we use glPushAttrib, on some graphics cards, the texture bit remains set
+  glDisable(GL_TEXTURE_2D);
+
+  glPopAttrib();
+}
 
 template<class TPixel>
 void
@@ -237,15 +300,31 @@ OpenGLSliceTexture<TPixel>
   glVertex2d(w,0);
   glEnd();
 
+  // Even though we use glPushAttrib, on some graphics cards, the texture bit remains set
+  glDisable(GL_BLEND);
+  glDisable(GL_TEXTURE_2D);
+
   glPopAttrib();
 }
 
 template<class TPixel>
 void OpenGLSliceTexture<TPixel>::SetImage(ImageType *inImage)
 {
+  // Assign the image
   m_Image = inImage;
   m_Image->GetSource()->UpdateLargestPossibleRegion();
   m_UpdateTime = 0;
+}
+
+template<class TPixel>
+void OpenGLSliceTexture<TPixel>::SetMipMapping(bool state)
+{
+  // Set the mipmapping state
+  if(m_MipMapping != state)
+    {
+    m_MipMapping = state;
+    m_UpdateTime = 0;
+    }
 }
 
 // Explicit instantiation of templates

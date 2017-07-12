@@ -58,8 +58,6 @@
 #include "DefaultBehaviorSettings.h"
 #include "SynchronizationModel.h"
 
-
-
 #include "QtCursorOverride.h"
 #include "QtWarningDialog.h"
 #include <QtWidgetCoupling.h>
@@ -71,7 +69,8 @@
 #include <DropActionDialog.h>
 #include <PreferencesDialog.h>
 #include "SaveModifiedLayersDialog.h"
-
+#include <InterpolateLabelsDialog.h>
+#include "RegistrationDialog.h"
 
 #include <QAbstractListModel>
 #include <QItemDelegate>
@@ -211,6 +210,10 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   m_StatisticsDialog = new StatisticsDialog(this);
   m_StatisticsDialog->setModal(false);
 
+  m_InterpolateLabelsDialog = new InterpolateLabelsDialog(this);
+  m_InterpolateLabelsDialog->setModal(false);
+
+
   // Initialize the docked panels
   m_DockLeft = new QDockWidget(this);
   m_DockLeft->setAllowedAreas(Qt::LeftDockWidgetArea);
@@ -224,13 +227,30 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   m_ControlPanel = new MainControlPanel(this);
   m_DockLeft->setWidget(m_ControlPanel);
 
+  // Connect left dock to its menu item
+  connect(m_DockLeft, SIGNAL(visibilityChanged(bool)),
+          ui->actionMainControlPanel, SLOT(setChecked(bool)));
+
+  // Set up the right hand side dock widget
   m_DockRight = new QDockWidget("Segment 3D", this);
-  m_SnakeWizard = new SnakeWizardPanel(this);
-  m_DockRight->setWidget(m_SnakeWizard);
+
   m_DockRight->setAllowedAreas(Qt::RightDockWidgetArea);
   m_DockRight->setFeatures(
         QDockWidget::DockWidgetFloatable |
         QDockWidget::DockWidgetMovable);
+
+  m_RightDockStack = new QStackedWidget(m_DockRight);
+  connect(m_RightDockStack, SIGNAL(currentChanged(int)),
+          this, SLOT(onRightDockCurrentChanged(int)));
+
+  m_DockRight->setWidget(m_RightDockStack);
+
+  m_SnakeWizard = new SnakeWizardPanel(this);
+  m_RegistrationDialog = new RegistrationDialog(this);
+
+  m_RightDockStack->addWidget(m_SnakeWizard);
+  m_RightDockStack->addWidget(m_RegistrationDialog);
+
   this->addDockWidget(Qt::RightDockWidgetArea, m_DockRight);
 
   // Set up the recent items panels
@@ -255,7 +275,10 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
 
   // Hide the dock when the wizard finishes
   connect(m_SnakeWizard, SIGNAL(wizardFinished()),
-          this, SLOT(onSnakeWizardFinished()));
+          this, SLOT(onRightDockDialogFinished()));
+
+  connect(m_RegistrationDialog, SIGNAL(wizardFinished()),
+          this, SLOT(onRightDockDialogFinished()));
 
   // Make the margins adjust when the docks are attached
   connect(m_DockLeft, SIGNAL(dockLocationChanged(Qt::DockWidgetArea)),
@@ -293,23 +316,6 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
 
   // We accept drop events
   setAcceptDrops(true);
-
-  // Connect recent file/project menu items
-  connect(ui->actionRecent_1, SIGNAL(triggered()), SLOT(LoadRecentActionTriggered()));
-  connect(ui->actionRecent_2, SIGNAL(triggered()), SLOT(LoadRecentActionTriggered()));
-  connect(ui->actionRecent_3, SIGNAL(triggered()), SLOT(LoadRecentActionTriggered()));
-  connect(ui->actionRecent_4, SIGNAL(triggered()), SLOT(LoadRecentActionTriggered()));
-  connect(ui->actionRecent_5, SIGNAL(triggered()), SLOT(LoadRecentActionTriggered()));
-  connect(ui->actionRecentOverlay_1, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
-  connect(ui->actionRecentOverlay_2, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
-  connect(ui->actionRecentOverlay_3, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
-  connect(ui->actionRecentOverlay_4, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
-  connect(ui->actionRecentOverlay_5, SIGNAL(triggered()), SLOT(LoadRecentOverlayActionTriggered()));
-  connect(ui->actionRecentWorkspace1, SIGNAL(triggered()), SLOT(LoadRecentProjectActionTriggered()));
-  connect(ui->actionRecentWorkspace2, SIGNAL(triggered()), SLOT(LoadRecentProjectActionTriggered()));
-  connect(ui->actionRecentWorkspace3, SIGNAL(triggered()), SLOT(LoadRecentProjectActionTriggered()));
-  connect(ui->actionRecentWorkspace4, SIGNAL(triggered()), SLOT(LoadRecentProjectActionTriggered()));
-  connect(ui->actionRecentWorkspace5, SIGNAL(triggered()), SLOT(LoadRecentProjectActionTriggered()));
 
   // Set up the animation timer
   m_AnimateTimer = new QTimer(this);
@@ -406,6 +412,12 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
 #ifndef __APPLE__
   TranslateChildTooltipKeyModifiers(this);
 #endif
+
+  // Listen to changes in the active window. This affects the behavior of the "close" shortcut
+  connect(qApp, SIGNAL(focusChanged(QWidget*,QWidget*)), this, SLOT(onActiveChanged()));
+
+  // Start with the "close window" menu item hidden
+  ui->actionClose_Window->setVisible(false);
 }
 
 
@@ -418,7 +430,7 @@ MainImageWindow::~MainImageWindow()
 void MainImageWindow::HookupShortcutToAction(const QKeySequence &ks, QAction *action)
 {
   // The bug/feature of single-key shortcuts not working is only in MacOS
-#if QT_VERSION >= 0x050000 && defined __APPLE__
+#if QT_VERSION >= 0x050000 && QT_VERSION < 0x050600 && defined __APPLE__
   QShortcut *short_S = new QShortcut(ks, this);
   connect(short_S, SIGNAL(activated()), action, SLOT(trigger()));
 #endif
@@ -449,6 +461,8 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   m_DropDialog->SetModel(model);
   m_StatisticsDialog->SetModel(model);
   m_PreferencesDialog->SetModel(model->GetGlobalPreferencesModel());
+  m_InterpolateLabelsDialog->SetModel(model->GetInterpolateLabelModel());
+  m_RegistrationDialog->SetModel(model->GetRegistrationModel());
 
   // Initialize the docked panels
   m_ControlPanel->SetModel(model);
@@ -584,7 +598,7 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   activateOnFlag(ui->actionColor_Map_Editor, m_Model, UIF_BASEIMG_LOADED);
   activateOnFlag(ui->actionLabel_Editor, m_Model, UIF_BASEIMG_LOADED);
   activateOnFlag(ui->actionImage_Information, m_Model, UIF_BASEIMG_LOADED);
-  activateOnFlag(ui->actionLabel_Editor, m_Model, UIF_BASEIMG_LOADED);
+  activateOnFlag(ui->actionRegistration, m_Model, UIF_IRIS_WITH_OVERLAY_LOADED);
 
   activateOnFlag(ui->actionReorient_Image, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
 
@@ -612,6 +626,7 @@ void MainImageWindow::ShowFirstTime()
   this->UpdateWindowTitle();
   this->UpdateLayerLayoutActions();
   this->UpdateSelectedLayerActions();
+  this->UpdateDICOMContentsMenu();
 
   // Show the window
   this->show();
@@ -641,6 +656,7 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
      b.HasEvent(ValueChangedEvent(), m_Model->GetHistoryModel("MainImage")))
     {
     this->UpdateRecentMenu();
+    this->UpdateDICOMContentsMenu();
     }
 
   if(b.HasEvent(ValueChangedEvent(), m_Model->GetHistoryModel("Project")))
@@ -650,6 +666,7 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
 
   if(b.HasEvent(ValueChangedEvent(), m_Model->GetGlobalState()->GetProjectFilenameModel()))
     {
+    this->UpdateWindowTitle();
     this->UpdateProjectMenuItems();
     }
 
@@ -667,6 +684,27 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
                 m_Model->GetDriver()->GetGlobalState()->GetSelectedLayerIdModel()))
     {
     this->UpdateSelectedLayerActions();
+    }
+}
+
+void MainImageWindow::externalStyleSheetFileChanged(const QString &file)
+{
+  QFile File(file);
+  File.open(QFile::ReadOnly);
+  this->setStyleSheet(QLatin1String(File.readAll()));
+}
+
+void MainImageWindow::onActiveChanged()
+{
+  if(this->isActiveWindow())
+    {
+    ui->actionUnload_Last_Overlay->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_W));
+    ui->actionClose_Window->setVisible(false);
+    }
+  else
+    {
+    ui->actionUnload_Last_Overlay->setShortcut(QKeySequence());
+    ui->actionClose_Window->setVisible(true);
     }
 }
 
@@ -792,89 +830,103 @@ void MainImageWindow::UpdateSelectedLayerActions()
     }
 }
 
+Q_DECLARE_METATYPE(IRISApplication::DicomSeriesDescriptor)
+
+void MainImageWindow::UpdateDICOMContentsMenu()
+{
+  // Clear the menu
+  ui->menuAddAnotherDicomImage->clear();
+
+  // Any actions added?
+  bool have_actions = false;
+
+  // Get the list of dicom series grouped by filename
+  IRISApplication::DicomSeriesTree dicoms =
+      m_Model->GetDriver()->ListAvailableSiblingDicomSeries();
+
+  // Iterate over all of these
+  for(IRISApplication::DicomSeriesTree::const_iterator it_map = dicoms.begin();
+      it_map != dicoms.end(); ++it_map)
+    {
+    // Create a submenu or point to the menu itself
+    QMenu *target_menu = ui->menuAddAnotherDicomImage;
+    if(dicoms.size() > 1)
+      {
+      target_menu = new QMenu(from_utf8(it_map->first), ui->menuAddAnotherDicomImage);
+      ui->menuAddAnotherDicomImage->addMenu(target_menu);
+      }
+
+    // Add all the series_ids as actions
+    for(IRISApplication::DicomSeriesListing::const_iterator it_list =
+        it_map->second.begin(); it_list != it_map->second.end(); it_list++)
+      {
+      // Create a new action
+      QAction *action = new QAction(this);
+      QVariant user_data; user_data.setValue(*it_list);
+      action->setData(user_data);
+      action->setText(QString("%1 [%2]")
+                      .arg(from_utf8(it_list->series_desc))
+                      .arg(from_utf8(it_list->dimensions)));
+
+      // Connect this action to its slot
+      connect(action, SIGNAL(triggered()),
+              this, SLOT(LoadAnotherDicomActionTriggered()));
+
+      // Add the action to the menu
+      target_menu->addAction(action);
+
+      // We have some actions!
+      have_actions = true;
+      }
+    }
+
+  // Hide or show the menu based on availability of actions
+  ui->menuAddAnotherDicomImage->menuAction()->setVisible(have_actions);
+}
+
+void MainImageWindow::CreateRecentMenu(
+    QMenu *submenu,
+    const char *history_category,
+    bool use_global_history,
+    int max_items,
+    const char *slot)
+{
+  // Delete all the menu items in the parent menu
+  submenu->clear();
+
+  // Get the recent history for this category
+  std::vector<std::string> recent =
+      m_Model->GetRecentHistoryItems(history_category, max_items, use_global_history);
+
+  // Create an action for each recent item
+  for(int i = 0; i < recent.size(); i++)
+    {
+    // Create an action for this file
+    QAction *action = submenu->addAction(from_utf8(recent[i]));
+    connect(action, SIGNAL(triggered(bool)), this, slot);
+    }
+
+  // Toggle the visibility of the submenu
+  submenu->menuAction()->setVisible(recent.size() > 0);
+}
+
 void MainImageWindow::UpdateRecentMenu()
 {
-  // Menus to populate
-  QAction *menus[] = {
-    ui->actionRecent_1,
-    ui->actionRecent_2,
-    ui->actionRecent_3,
-    ui->actionRecent_4,
-    ui->actionRecent_5};
+  // Create recent menus for various history categories
+  this->CreateRecentMenu(ui->menuRecent_Images, "MainImage", true, 5,
+                         SLOT(LoadRecentActionTriggered()));
 
-  // List of filenames
-  std::vector<std::string> recent = m_Model->GetRecentHistoryItems("MainImage", 5);
+  this->CreateRecentMenu(ui->menuRecent_Overlays, "AnatomicImage", false, 5,
+                         SLOT(LoadRecentOverlayActionTriggered()));
 
-  // Toggle the state of each menu item
-  for(int i = 0; i < 5; i++)
-    {
-    if(i < recent.size())
-      {
-      menus[i]->setText(from_utf8(recent[i]));
-      menus[i]->setEnabled(true);
-      }
-    else
-      {
-      menus[i]->setText("Not available");
-      menus[i]->setEnabled(false);
-      }
-    }
-
-  // Do the same for the overlay menus
-  QAction *omenus[] = {
-    ui->actionRecentOverlay_1,
-    ui->actionRecentOverlay_2,
-    ui->actionRecentOverlay_3,
-    ui->actionRecentOverlay_4,
-    ui->actionRecentOverlay_5};
-
-  // List of filenames - from local history
-  recent = m_Model->GetRecentHistoryItems("AnatomicImage", 5, false);
-
-  // Toggle the state of each menu item
-  for(int i = 0; i < 5; i++)
-    {
-    if(i < recent.size())
-      {
-      omenus[i]->setText(from_utf8(recent[i]));
-      omenus[i]->setEnabled(true);
-      }
-    else
-      {
-      omenus[i]->setText("Not available");
-      omenus[i]->setEnabled(false);
-      }
-    }
-
+  this->CreateRecentMenu(ui->menuRecent_Segmentations, "LabelImage", false, 5,
+                         SLOT(LoadRecentSegmentationActionTriggered()));
 }
 
 void MainImageWindow::UpdateRecentProjectsMenu()
 {
-  // Menus to populate
-  QAction *menus[] = {
-    ui->actionRecentWorkspace1,
-    ui->actionRecentWorkspace2,
-    ui->actionRecentWorkspace3,
-    ui->actionRecentWorkspace4,
-    ui->actionRecentWorkspace5};
-
-  // List of filenames
-  std::vector<std::string> recent = m_Model->GetRecentHistoryItems("Project", 5);
-
-  // Toggle the state of each menu item
-  for(int i = 0; i < 5; i++)
-    {
-    if(i < recent.size())
-      {
-      menus[i]->setText(from_utf8(recent[i]));
-      menus[i]->setEnabled(true);
-      }
-    else
-      {
-      menus[i]->setText("Not available");
-      menus[i]->setEnabled(false);
-      }
-    }
+  this->CreateRecentMenu(ui->menuRecentWorkspaces, "Project", true, 5,
+                         SLOT(LoadRecentProjectActionTriggered()));
 }
 
 
@@ -994,7 +1046,7 @@ void MainImageWindow::on_actionLoad_from_Image_triggered()
   delegate->Initialize(m_Model->GetDriver());
 
   SmartPtr<ImageIOWizardModel> model = ImageIOWizardModel::New();
-  model->InitializeForLoad(m_Model, delegate, "LabelImage", "Segmentation Image");
+  model->InitializeForLoad(m_Model, delegate);
 
   // Execute the IO wizard
   ImageIOWizard wiz(this);
@@ -1045,6 +1097,8 @@ void MainImageWindow::OpenSnakeWizard()
   m_SizeWithoutRightDock = this->size();
 
   // Make the dock containing the wizard visible
+  m_DockRight->setWindowTitle("Segment 3D");
+  m_RightDockStack->setCurrentWidget(m_SnakeWizard);
   m_DockRight->setVisible(true);
 }
 
@@ -1118,8 +1172,8 @@ void MainImageWindow::LoadDroppedFile(QString file)
       }
     else
       {
-      // Otherwise, attempt to load the image
-      this->LoadMainImage(file);
+      // Otherwise, load the main image directly
+      m_DropDialog->LoadMainImage(file);
       }
     }
 }
@@ -1197,8 +1251,8 @@ void MainImageWindow::dropEvent(QDropEvent *event)
 #endif
 
   QString file = url.toLocalFile();
-  LoadDroppedFile(file);
   event->acceptProposedAction();
+  LoadDroppedFile(file);
 }
 
 QActionGroup *MainImageWindow::GetMainToolActionGroup()
@@ -1271,6 +1325,63 @@ void MainImageWindow::LoadRecentOverlayActionTriggered()
     }
 }
 
+void MainImageWindow::LoadRecentSegmentationActionTriggered()
+{
+  // Get the filename that wants to be loaded
+  QAction *action = qobject_cast<QAction *>(sender());
+  QString file = action->text();
+
+  // Prompt for unsaved changes
+  if(!SaveModifiedLayersDialog::PromptForUnsavedSegmentationChanges(m_Model))
+    return;
+
+  // Try loading the image
+  try
+    {
+    // Change cursor for this operation
+    QtCursorOverride c(Qt::WaitCursor);
+    IRISWarningList warnings;
+    SmartPtr<LoadSegmentationImageDelegate> del = LoadSegmentationImageDelegate::New();
+    del->Initialize(m_Model->GetDriver());
+    m_Model->GetDriver()->LoadImageViaDelegate(file.toUtf8().constData(), del, warnings);
+    }
+  catch(exception &exc)
+    {
+    ReportNonLethalException(this, exc, "Image IO Error",
+                             QString("Failed to load segmentation image %1").arg(file));
+    }
+}
+
+void MainImageWindow::LoadAnotherDicomActionTriggered()
+{
+  // Request to load another DICOM from the main image's folder
+  QAction *action = qobject_cast<QAction *>(sender());
+
+  // Get the dicom descriptor
+  IRISApplication::DicomSeriesDescriptor desc =
+      action->data().value<IRISApplication::DicomSeriesDescriptor>();
+
+  // Try to load a DICOM with this series ID
+  try
+    {
+    // Change cursor for this operation
+    QtCursorOverride c(Qt::WaitCursor);
+    IRISWarningList warnings;
+    SmartPtr<LoadOverlayImageDelegate> del = LoadOverlayImageDelegate::New();
+    del->Initialize(m_Model->GetDriver());
+    m_Model->GetDriver()->LoadAnotherDicomSeriesViaDelegate(
+          desc.layer_uid, desc.series_id.c_str(), del, warnings);
+    }
+  catch(exception &exc)
+    {
+    ReportNonLethalException(this, exc, "Image IO Error",
+                             QString("Failed to load overlay image %1").arg(action->text()));
+    }
+
+}
+
+
+
 void MainImageWindow::LoadProject(const QString &file)
 {
   // Try loading the image
@@ -1309,13 +1420,14 @@ void MainImageWindow::LoadRecentProjectActionTriggered()
 }
 
 
-void MainImageWindow::onSnakeWizardFinished()
+void MainImageWindow::onRightDockDialogFinished()
 {
   // Make the dock containing the wizard visible
   m_DockRight->setVisible(false);
 
   // Auto-adjust the canvas size
-  this->UpdateCanvasDimensions();
+  QTimer::singleShot(0, this, SLOT(UpdateCanvasDimensions()));
+  // this->UpdateCanvasDimensions();
 }
 
 void MainImageWindow::on_actionUnload_All_triggered()
@@ -1396,8 +1508,7 @@ void MainImageWindow::on_actionOpenMain_triggered()
   SmartPtr<LoadMainImageDelegate> delegate = LoadMainImageDelegate::New();
   delegate->Initialize(m_Model->GetDriver());
   SmartPtr<ImageIOWizardModel> model = ImageIOWizardModel::New();
-  model->InitializeForLoad(m_Model, delegate,
-                           "AnatomicImage", "Main Image");
+  model->InitializeForLoad(m_Model, delegate);
 
   // Execute the IO wizard
   ImageIOWizard wiz(this);
@@ -1410,23 +1521,7 @@ void MainImageWindow::on_actionAdd_Overlay_triggered()
   SmartPtr<LoadOverlayImageDelegate> delegate = LoadOverlayImageDelegate::New();
   delegate->Initialize(m_Model->GetDriver());
   SmartPtr<ImageIOWizardModel> model = ImageIOWizardModel::New();
-  model->InitializeForLoad(m_Model, delegate,
-                           "AnatomicImage", "Additional Image");
-
-  // Execute the IO wizard
-  ImageIOWizard wiz(this);
-  wiz.SetModel(model);
-  wiz.exec();
-}
-
-
-void MainImageWindow::on_actionCoregister_Overlay_triggered()
-{
-  SmartPtr<LoadCoregisteredOverlayImageDelegate> delegate = LoadCoregisteredOverlayImageDelegate::New();
-  delegate->Initialize(m_Model->GetDriver());
-  SmartPtr<ImageIOWizardModel> model = ImageIOWizardModel::New();
-  model->InitializeForLoad(m_Model, delegate,
-                           "AnatomicImage", "Coregistered Overlay Image");
+  model->InitializeForLoad(m_Model, delegate);
 
   // Execute the IO wizard
   ImageIOWizard wiz(this);
@@ -2062,6 +2157,25 @@ void MainImageWindow::changeEvent(QEvent *)
     m_Model->GetSynchronizationModel()->SetCanBroadcast(this->isActiveWindow());
 }
 
+void MainImageWindow::on_actionClose_Window_triggered()
+{
+  // If main window is not the active window, close the active window instead of closing
+  // any images. This is because Ctrl-W shortcut should be reserved for closign windows
+  if(QApplication::activeWindow() != this)
+    {
+    QApplication::activeWindow()->close();
+    return;
+    }
+}
+
+void MainImageWindow::onRightDockCurrentChanged(int)
+{
+  // Adjust the width of the stack to match the current widget
+  m_RightDockStack->setMaximumWidth(
+        m_RightDockStack->currentWidget()->maximumWidth());
+}
+
+
 void MainImageWindow::on_actionUnload_Last_Overlay_triggered()
 {
   // Get the selected ID
@@ -2103,4 +2217,28 @@ void MainImageWindow::on_actionActivateNextLayer_triggered()
 void MainImageWindow::on_actionActivatePreviousLayer_triggered()
 {
   m_Model->GetDisplayLayoutModel()->ActivatePrevLayerInTiledMode();
+}
+
+void MainImageWindow::on_actionInterpolate_Labels_triggered()
+{
+  RaiseDialog(m_InterpolateLabelsDialog);
+}
+
+void MainImageWindow::on_actionRegistration_triggered()
+{
+  // Remember the size of the window before the right dock was shown
+  m_SizeWithoutRightDock = this->size();
+
+  m_DockRight->setWindowTitle("Registration");
+  m_RightDockStack->setCurrentWidget(m_RegistrationDialog);
+  m_DockRight->setVisible(true);
+}
+
+
+void MainImageWindow::on_actionMainControlPanel_triggered()
+{
+  if(ui->actionMainControlPanel->isChecked())
+    m_DockLeft->show();
+  else
+    m_DockLeft->hide();
 }

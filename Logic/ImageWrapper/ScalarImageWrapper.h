@@ -77,10 +77,21 @@ public:
   typedef typename Superclass::ImagePointer                       ImagePointer;
   typedef typename Superclass::PixelType                             PixelType;
   typedef typename Superclass::CommonFormatImageType     CommonFormatImageType;
+  typedef typename Superclass::PreviewImageType               PreviewImageType;
 
   // Floating point image type
   typedef itk::Image<float, 3>                                  FloatImageType;
   typedef itk::ImageSource<FloatImageType>                    FloatImageSource;
+
+  // Double precision floating point image type
+  typedef itk::Image<double, 3>                                DoubleImageType;
+  typedef itk::ImageSource<DoubleImageType>                  DoubleImageSource;
+
+  // Vector image types
+  typedef itk::VectorImage<float, 3>                      FloatVectorImageType;
+  typedef itk::ImageSource<FloatVectorImageType>        FloatVectorImageSource;
+  typedef itk::VectorImage<double, 3>                    DoubleVectorImageType;
+  typedef itk::ImageSource<DoubleVectorImageType>      DoubleVectorImageSource;
 
   // Slice image type
   typedef typename Superclass::SliceType                             SliceType;
@@ -231,6 +242,16 @@ public:
     */
   SmartPtr<FloatImageSource> CreateCastToFloatPipeline() const;
 
+  /** Same as above, but casts to double. For compatibility with C3D, until we
+   * safely switch C3D to use float instead of double */
+  SmartPtr<DoubleImageSource> CreateCastToDoublePipeline() const;
+
+  /** Same as CreateCastToFloatPipeline, but for vector images of single dimension */
+  SmartPtr<FloatVectorImageSource> CreateCastToFloatVectorPipeline() const;
+
+  /** Same as CreateCastToFloatPipeline, but for vector images of single dimension */
+  SmartPtr<DoubleVectorImageSource> CreateCastToDoubleVectorPipeline() const;
+
   /**
    * Get an image cast to a common representation.
    * @see ScalarImageWrapperBase::GetCommonFormatImage()
@@ -299,12 +320,12 @@ protected:
                                   ITKTransformType *tran = NULL);
 
 
-  typedef itk::VTKImageExport<ImageType> VTKExporter;
-  SmartPtr<VTKExporter> m_VTKExporter;
+  //typedef itk::VTKImageExport<ImageType> VTKExporter;
+  //SmartPtr<VTKExporter> m_VTKExporter;
 
   vtkSmartPointer<vtkImageImport> m_VTKImporter;
 
-  void SetupVTKImportExport();
+  //void SetupVTKImportExport();
 };
 
 #endif // __ScalarImageWrapper_h_

@@ -31,6 +31,9 @@ FileChooserPanelWithHistory::FileChooserPanelWithHistory(QWidget *parent) :
 
   // Connect up the format selector to the filename
   connect(ui->inFormat, SIGNAL(activated(QString)), this, SLOT(setActiveFormat(QString)));
+
+  // This flag should be false almost always
+  m_keepActiveFormatOnFilenameUpdate = false;
 }
 
 FileChooserPanelWithHistory::~FileChooserPanelWithHistory()
@@ -187,11 +190,21 @@ void FileChooserPanelWithHistory::initializeForOpenFile(
   // Set the initial file
   if(initialFile.length())
     {
-    this->updateFilename(initialFile);
-    }
+    // If activeFormat was specified, we want to prevent the command from guessing
+    // the format from the filename, we want it to trust the activeFormat provided
+    // by the user instead
+    if(activeFormat.length())
+      m_keepActiveFormatOnFilenameUpdate = true;
 
-  // Update the display
-  on_inFilename_textChanged(ui->inFilename->text());
+    this->updateFilename(initialFile);
+
+    m_keepActiveFormatOnFilenameUpdate = false;
+    }
+  else
+    {
+    // Update the display
+    on_inFilename_textChanged(ui->inFilename->text());
+    }
 }
 
 void FileChooserPanelWithHistory::initializeForSaveFile(
@@ -318,6 +331,11 @@ QString FileChooserPanelWithHistory::absoluteFilename() const
   return fi2.absoluteFilePath();
 }
 
+void FileChooserPanelWithHistory::setFilename(QString filename)
+{
+  this->updateFilename(filename);
+}
+
 QString FileChooserPanelWithHistory::absoluteFilenameKeepExtension() const
 {
   QFileInfo fi(ui->inFilename->text());
@@ -362,7 +380,19 @@ void FileChooserPanelWithHistory::setActiveFormat(QString format)
 
   // In open mode, we don't tweak the extension
   if(m_openMode)
+    {
+    // If there was previously an error about an unspecified format,
+    // clear it because the user manually overrode by selecting a
+    // new format
+    // TODO: this is hacky!
+    if(ui->outError->text() == QString("Unable to recognize file format"))
+      {
+      ui->outError->clear();
+      }
+
+    emit activeFormatChanged(activeFormat());
     return;
+    }
 
   // Get the default new suffix
   QString newSuffix = m_Filter[format].front();
@@ -387,6 +417,7 @@ void FileChooserPanelWithHistory::setActiveFormat(QString format)
 
   // Highlight the filename
   highlightFilename();
+  emit activeFormatChanged(activeFormat());
 }
 
 void FileChooserPanelWithHistory::on_btnBrowse_clicked()
@@ -434,6 +465,7 @@ void FileChooserPanelWithHistory::on_btnBrowse_clicked()
   QStringList flatExtensionList;
   QStringList formatList;
   QString formatEntry;
+  QString defaultExtension;
   bool have_empty = false;
   foreach(QString format, m_Filter.keys())
     {
@@ -466,7 +498,10 @@ void FileChooserPanelWithHistory::on_btnBrowse_clicked()
     formatList << line;
 
     if(m_defaultFormat == format)
+      {
       formatEntry = line;
+      defaultExtension = m_Filter[format].first();
+      }
     }
 
   if(m_openMode)
@@ -479,8 +514,14 @@ void FileChooserPanelWithHistory::on_btnBrowse_clicked()
     }
   else
     {
+#ifdef __APPLE__
+    // On MacOS, compound extensions are a problem, see Qt bug QTBUG-44227
+    dialog.setDefaultSuffix(defaultExtension);
+
+#else
     dialog.setNameFilters(formatList);
     dialog.selectNameFilter(formatEntry);
+#endif
     }
 
   if(dialog.exec() && dialog.selectedFiles().size())
@@ -539,12 +580,33 @@ void FileChooserPanelWithHistory::setCurrentFormatText(const QString &format)
 #endif
 }
 
+bool FileChooserPanelWithHistory::isFilenameNonAscii(const QString &text)
+{
+#ifdef WIN32
+  for(int i = 0; i < text.length(); i++)
+    {
+    if(text[i].unicode() > 127)
+      return true;
+    }
+#endif
+
+  return false;
+}
+
 void FileChooserPanelWithHistory::on_inFilename_textChanged(const QString &text)
 {
   // The filename has changed. The first thing we do is to see if the filename has
   // an extension that matches one of our supported extensions. If it does, then
   // we change the active format to be that format
-  QString format = guessFormat(absoluteFilenameKeepExtension());
+  QString format;
+
+  // Do we want to trust the currently set format (i.e., provided by caller when
+  // calling initialize)
+  if(m_keepActiveFormatOnFilenameUpdate)
+    format = m_defaultFormat;
+  else
+    format = guessFormat(absoluteFilenameKeepExtension());
+
   if(format.length())
     {
     m_defaultFormat = format;
@@ -582,6 +644,8 @@ void FileChooserPanelWithHistory::on_inFilename_textChanged(const QString &text)
       ui->outError->setText("The file is not readable");
     else if(ui->inFormat->currentIndex() == -1 && ui->inFilename->text().length())
       ui->outError->setText("Unable to recognize file format");
+    else if(isFilenameNonAscii(fiwd.absoluteFilePath()))
+      ui->outError->setText("The filename contains unsupported characters");
     else
       ui->outError->setText("");
 
@@ -612,8 +676,10 @@ void FileChooserPanelWithHistory::on_inFilename_textChanged(const QString &text)
         }
 
       // Does the file exist?
-      if(fiwd.exists())
-        ui->outError->setText("Existing file will be overridden!");
+	  if (isFilenameNonAscii(fiwd.absoluteFilePath()))
+		ui->outError->setText("The filename contains unsupported characters");
+      else if(fiwd.exists())
+        ui->outError->setText("Existing file will be overwritten!");
       }
     }
 

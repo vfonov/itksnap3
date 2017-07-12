@@ -55,6 +55,9 @@ public:
   // Get the filename selected
   QString absoluteFilename() const;
 
+  // Set the absolute filename
+  void setFilename(QString filename);
+
   // Get teh active format
   QString activeFormat() const;
 
@@ -103,6 +106,10 @@ private:
   bool m_directoryMode;
   bool m_forceExtension;
 
+  // Prevent auto-determination of format when calling updateFilename, meant
+  // to be used inside of initialize calls
+  bool m_keepActiveFormatOnFilenameUpdate;
+
   QString m_historyCategory;
   QString m_filePattern;
   QString m_workingDir;
@@ -121,6 +128,7 @@ private:
   const char *m_oracleSlot;
   QString guessFormat(const QString &text);
   void setCurrentFormatText(const QString &format);
+  bool isFilenameNonAscii(const QString &text);
 };
 
 #endif // FILECHOOSERPANELWITHHISTORY_H

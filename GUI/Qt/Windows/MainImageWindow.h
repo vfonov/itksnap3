@@ -40,16 +40,19 @@ class EventBucket;
 class QModelIndex;
 class QProgressDialog;
 class AboutDialog;
+class QStackedWidget;
 
 class LabelEditorDialog;
 class LayerInspectorDialog;
 class QtProgressReporterDelegate;
 class ReorientImageDialog;
+class RegistrationDialog;
 class DropActionDialog;
 class MainControlPanel;
 class StatisticsDialog;
 class QActionGroup;
 class PreferencesDialog;
+class InterpolateLabelsDialog;
 class ImageIOWizard;
 class ImageIOWizardModel;
 
@@ -122,12 +125,19 @@ public slots:
 
   void LoadRecentActionTriggered();
   void LoadRecentOverlayActionTriggered();
+  void LoadRecentSegmentationActionTriggered();
   void LoadRecentProjectActionTriggered();
+  void LoadAnotherDicomActionTriggered();
 
   void AdjustMarginsForDocks();
   void onModelUpdate(const EventBucket &b);
 
+  void externalStyleSheetFileChanged(const QString &file);
+
 private slots:
+
+  void onActiveChanged();
+
   void on_actionQuit_triggered();
 
   void on_actionLoad_from_Image_triggered();
@@ -136,7 +146,7 @@ private slots:
 
   void on_actionLabel_Editor_triggered();
 
-  void onSnakeWizardFinished();
+  void onRightDockDialogFinished();
 
   void on_actionUnload_All_triggered();
 
@@ -271,13 +281,21 @@ private slots:
 
   void on_actionUnload_All_Overlays_triggered();
 
-  void on_actionCoregister_Overlay_triggered();
-
   void on_actionToggleLayerLayout_triggered();
 
   void on_actionActivateNextLayer_triggered();
 
   void on_actionActivatePreviousLayer_triggered();
+
+  void on_actionInterpolate_Labels_triggered();
+
+  void on_actionRegistration_triggered();
+
+  void on_actionClose_Window_triggered();
+
+  void onRightDockCurrentChanged(int);
+
+  void on_actionMainControlPanel_triggered();
 
 protected:
 
@@ -288,12 +306,18 @@ protected:
 
 private:
 
+  void CreateRecentMenu(QMenu *submenu,
+                        const char *history_category,
+                        bool use_global_history,
+                        int max_items, const char *slot);
+
   void UpdateRecentMenu();
   void UpdateWindowTitle();
   void UpdateProjectMenuItems();
   void UpdateRecentProjectsMenu();
   void UpdateLayerLayoutActions();
   void UpdateSelectedLayerActions();
+  void UpdateDICOMContentsMenu();
 
   // Save the segmentation (interactively or not). Return true if save was
   // successful
@@ -317,6 +341,9 @@ private:
 
   // Left and right docks
   QDockWidget *m_DockLeft, *m_DockRight;
+
+  // A stack widget for the right dock
+  QStackedWidget *m_RightDockStack;
 
   // Size before the right dock is shown
   QSize m_SizeWithoutRightDock;
@@ -353,6 +380,10 @@ private:
   StatisticsDialog *m_StatisticsDialog;
 
   PreferencesDialog *m_PreferencesDialog;
+
+  InterpolateLabelsDialog *m_InterpolateLabelsDialog;
+
+  RegistrationDialog *m_RegistrationDialog;
 
   // A timer used to animate components
   QTimer *m_AnimateTimer;

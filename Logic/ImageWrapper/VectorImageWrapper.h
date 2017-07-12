@@ -55,6 +55,7 @@ public:
   typedef typename Superclass::ImageBaseType                     ImageBaseType;
   typedef typename Superclass::ImageType                             ImageType;
   typedef typename Superclass::ImagePointer                       ImagePointer;
+  typedef typename Superclass::PreviewImageType               PreviewImageType;
 
   // Pixel type
   typedef typename Superclass::PixelType                             PixelType;
@@ -203,7 +204,9 @@ public:
 
   virtual void SetSliceIndex(const Vector3ui &cursor);
 
-  virtual void SetDisplayGeometry(IRISDisplayGeometry &dispGeom);
+  virtual void SetDisplayGeometry(const IRISDisplayGeometry &dispGeom);
+
+  virtual void SetDisplayViewportGeometry(unsigned int index, ImageBaseType *viewport_image);
 
   virtual void SetDirectionMatrix(const vnl_matrix<double> &direction);
 
@@ -239,6 +242,8 @@ protected:
   virtual void UpdateImagePointer(ImageType *image,
                                   ImageBaseType *refSpace = NULL,
                                   ITKTransformType *tran = NULL);
+
+  virtual void SetITKTransform(ImageBaseType *referenceSpace, ITKTransformType *transform);
 
   /** Destructor */
   virtual ~VectorImageWrapper();

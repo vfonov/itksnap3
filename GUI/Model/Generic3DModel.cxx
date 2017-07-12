@@ -13,6 +13,8 @@
 #include "vtkPointData.h"
 #include "itkMutexLockHolder.h"
 #include "MeshOptions.h"
+#include "ImageWrapperTraits.h"
+#include "SegmentationUpdateIterator.h"
 
 // All the VTK stuff
 #include "vtkPolyData.h"
@@ -229,7 +231,7 @@ void Generic3DModel::UpdateSegmentationMesh(itk::Command *callback)
 
     InvokeEvent(ModelUpdateEvent());
   }
-  catch(vtkstd::bad_alloc &)
+  catch(std::bad_alloc &)
   {
     throw IRISException("Out of memory during mesh computation");
   }
@@ -249,28 +251,61 @@ bool Generic3DModel::AcceptAction()
   ToolbarMode3DType mode = m_ParentUI->GetGlobalState()->GetToolbarMode3D();
   IRISApplication *app = m_ParentUI->GetDriver();
 
+  // Get the segmentation image
+  LabelImageWrapper::ImageType *imSeg = app->GetCurrentImageData()->GetSegmentation()->GetImage();
+
   // Accept the current action
   if(mode == SPRAYPAINT_MODE)
     {
+    // Anything to update?
+    bool update = false;
+
     // Merge all the spray points into the segmentation
-    app->BeginSegmentationUpdate("3D spray paint");
     for(int i = 0; i < m_SprayPoints->GetNumberOfPoints(); i++)
       {
+      // Find the point in image coordinates
       double *x = m_SprayPoints->GetPoint(i);
-      Vector3ui pos(
-            static_cast<unsigned int>(x[0]),
-            static_cast<unsigned int>(x[1]),
-            static_cast<unsigned int>(x[2]));
-      app->UpdateSegmentationVoxel(pos);
+
+      // Create a region around this one voxel (in the future could use other shapes)
+      SegmentationUpdateIterator::RegionType region;
+      region.SetIndex(0, static_cast<unsigned int>(x[0])); region.SetSize(0, 1);
+      region.SetIndex(1, static_cast<unsigned int>(x[1])); region.SetSize(1, 1);
+      region.SetIndex(2, static_cast<unsigned int>(x[2])); region.SetSize(2, 1);
+
+      // Treat each point as a region update
+      SegmentationUpdateIterator it(imSeg, region,
+                                    app->GetGlobalState()->GetDrawingColorLabel(),
+                                    app->GetGlobalState()->GetDrawOverFilter());
+
+      for(; !it.IsAtEnd(); ++it)
+        {
+        it.PaintAsForeground();
+        }
+
+      // Store the delta for this update
+      it.Finalize();
+
+      if(it.GetNumberOfChangedVoxels() > 0)
+        {
+        update = true;
+        app->GetCurrentImageData()->StoreIntermediateUndoDelta(it.RelinquishDelta());
+        }
       }
 
-    // Clear the spray points
-    m_SprayPoints->GetPoints()->Reset();
-    m_SprayPoints->Modified();
-    InvokeEvent(SprayPaintEvent());
+    // Store the undo point
+    if(update)
+      {
+      app->GetCurrentImageData()->StoreUndoPoint("3D spray paint");
+      app->RecordCurrentLabelUse();
+
+      // Clear the spray points
+      m_SprayPoints->GetPoints()->Reset();
+      m_SprayPoints->Modified();
+      InvokeEvent(SprayPaintEvent());
+      }
 
     // Return true if anything changed
-    return app->EndSegmentationUpdate() > 0;
+    return update;
     }
   else if(mode == SCALPEL_MODE && m_ScalpelStatus == SCALPEL_LINE_COMPLETED)
     {
@@ -280,12 +315,13 @@ bool Generic3DModel::AcceptAction()
 
     // Map these properties into the image coordinates
     Vector3d xi = affine_transform_point(m_WorldMatrixInverse, xw);
-    Vector3d ni = affine_transform_vector(m_WorldMatrixInverse, nw);
+
+    // Normal is a covariant tensor and has to be transformed by (M^-1)'
+    vnl_matrix<double> Madj = m_WorldMatrix.extract(3,3).transpose();
+    Vector3d ni = Madj * nw;
 
     // Use the driver to relabel the plane
-    app->BeginSegmentationUpdate("3D scalpel");
-    app->RelabelSegmentationWithCutPlane(ni, dot_product(xi, ni));
-    int nMod = app->EndSegmentationUpdate();
+    int nMod = app->RelabelSegmentationWithCutPlane(ni, dot_product(xi, ni));
 
     // Reset the scalpel state, but only if the operation was successful
     if(nMod > 0)
@@ -375,7 +411,7 @@ bool Generic3DModel::IntersectSegmentation(int vx, int vy, Vector3i &hit)
   int result = 0;
   if(m_Driver->IsSnakeModeLevelSetActive())
     {
-    typedef ImageRayIntersectionFinder<float, SnakeImageHitTester> RayCasterType;
+    typedef ImageRayIntersectionFinder<itk::Image<float, 3>, SnakeImageHitTester> RayCasterType;
     RayCasterType caster;
     result = caster.FindIntersection(
           m_ParentUI->GetDriver()->GetSNAPImageData()->GetSnake()->GetImage(),
@@ -383,7 +419,7 @@ bool Generic3DModel::IntersectSegmentation(int vx, int vy, Vector3i &hit)
     }
   else
     {
-    typedef ImageRayIntersectionFinder<LabelType, LabelImageHitTester> RayCasterType;
+    typedef ImageRayIntersectionFinder<LabelImageWrapperTraits::ImageType, LabelImageHitTester> RayCasterType;
     RayCasterType caster;
     LabelImageHitTester tester(m_ParentUI->GetDriver()->GetColorLabelTable());
     caster.SetHitTester(tester);

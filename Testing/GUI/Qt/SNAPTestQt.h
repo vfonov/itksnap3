@@ -48,6 +48,7 @@ protected:
   double m_Acceleration;
 
   void readScript(QString script_url, QString &script);
+
 };
 
 class SNAPTestQt : public QObject
@@ -78,6 +79,9 @@ public slots:
   // Find a widget by name globally
   QWidget *findWidget(QString widgetName);
 
+  // Invoke a slot
+  void invoke(QObject *object, QString slot);
+
   // Return the contents of an item in a table
   QVariant tableItemText(QObject *table, int row, int col);
 
@@ -104,6 +108,8 @@ public slots:
   void postKeyEvent(QObject *object, QString key);
 
   void sleep(int milli_sec);
+
+  static void application_exit(int rc);
 
 protected:
 

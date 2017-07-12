@@ -71,6 +71,10 @@ GenericSliceModel::GenericSliceModel()
   // Nothing is hovered over
   m_HoveredImageLayerIdModel = NewSimpleConcreteProperty(-1ul);
   m_HoveredImageIsThumbnailModel = NewSimpleConcreteProperty(false);
+
+  m_ImageToDisplayTransform = ImageCoordinateTransform::New();
+  m_DisplayToImageTransform = ImageCoordinateTransform::New();
+  m_DisplayToAnatomyTransform = ImageCoordinateTransform::New();
 }
 
 void GenericSliceModel::Initialize(GlobalUIModel *model, int index)
@@ -94,7 +98,13 @@ void GenericSliceModel::Initialize(GlobalUIModel *model, int index)
   Rebroadcast(dlm, DisplayLayoutModel::LayerLayoutChangeEvent(), ModelUpdateEvent());
 
   // Listen to cursor update events and rebroadcast them for the child model
-  m_SliceIndexModel->Rebroadcast(model, CursorUpdateEvent(), ValueChangedEvent());
+  m_SliceIndexModel->Rebroadcast(m_Driver, CursorUpdateEvent(), ValueChangedEvent());
+
+  // Also rebroadcast the cursor change events as a model update event
+  Rebroadcast(m_Driver, CursorUpdateEvent(), ModelUpdateEvent());
+
+  // Rebroadcast our own zoom/map events as model update events
+  Rebroadcast(this, SliceModelGeometryChangeEvent(), ModelUpdateEvent());
 
   // Also listen for changes in the selected layer
   AbstractSimpleULongProperty *selLayerModel = m_Driver->GetGlobalState()->GetSelectedLayerIdModel();
@@ -161,6 +171,17 @@ void GenericSliceModel::OnUpdate()
       }
     }
 
+  if(m_EventBucket->HasEvent(MainImageDimensionsChangeEvent())
+     || m_EventBucket->HasEvent(ViewportSizeReporter::ViewportResizeEvent())
+     || m_EventBucket->HasEvent(DisplayLayoutModel::LayerLayoutChangeEvent())
+     || m_EventBucket->HasEvent(ValueChangedEvent())
+     || m_EventBucket->HasEvent(CursorUpdateEvent())
+     || m_EventBucket->HasEvent(SliceModelGeometryChangeEvent()))
+    {
+    // Viewport geometry pretty much   depends on everything!
+    if(m_SliceInitialized && m_ViewZoom > 1.e-7)
+      this->UpdateUpstreamViewportGeometry();
+    }
 }
 
 void GenericSliceModel::ComputeOptimalZoom()
@@ -169,18 +190,18 @@ void GenericSliceModel::ComputeOptimalZoom()
   assert(IsSliceInitialized());
 
   // Compute slice size in spatial coordinates
-  Vector2f worldSize(
+  Vector2d worldSize(
     m_SliceSize[0] * m_SliceSpacing[0],
     m_SliceSize[1] * m_SliceSpacing[1]);
 
   // Set the view position (position of the center of the image?)
-  m_OptimalViewPosition = worldSize * 0.5f;
+  m_OptimalViewPosition = worldSize * 0.5;
 
   // Reduce the width and height of the slice by the margin
   Vector2ui szCanvas = this->GetCanvasSize();
 
   // Compute the ratios of window size to slice size
-  Vector2f ratios(
+  Vector2d ratios(
     szCanvas(0) / worldSize(0),
     szCanvas(1) / worldSize(1));
 
@@ -212,23 +233,24 @@ GenericSliceModel
     }
 
   // Store the transforms between the display and image spaces
-  m_ImageToDisplayTransform =
-    imageData->GetImageGeometry().GetImageToDisplayTransform(m_Id);
-  m_DisplayToImageTransform =
-    imageData->GetImageGeometry().GetDisplayToImageTransform(m_Id);
-  m_DisplayToAnatomyTransform =
-    imageData->GetImageGeometry().GetAnatomyToDisplayTransform(m_Id).Inverse();
+  m_ImageToDisplayTransform->SetTransform(
+        imageData->GetImageGeometry().GetImageToDisplayTransform(m_Id));
+  m_DisplayToImageTransform->SetTransform(
+    imageData->GetImageGeometry().GetDisplayToImageTransform(m_Id));
+
+  imageData->GetImageGeometry().GetAnatomyToDisplayTransform(m_Id)->
+      ComputeInverse(m_DisplayToAnatomyTransform);
 
   // Get the volume extents & voxel scale factors
   Vector3ui imageSizeInImageSpace = m_ImageData->GetVolumeExtents();
-  Vector3f imageScalingInImageSpace = to_float(m_ImageData->GetImageSpacing());
+  Vector3d imageScalingInImageSpace = to_double(m_ImageData->GetImageSpacing());
 
   // Initialize quantities that depend on the image and its transform
   for(unsigned int i = 0; i < 3; i++)
     {
     // Get the direction in image space that corresponds to the i'th
     // direction in slice space
-    m_ImageAxes[i] = m_DisplayToImageTransform.GetCoordinateIndexZeroBased(i);
+    m_ImageAxes[i] = m_DisplayToImageTransform->GetCoordinateIndexZeroBased(i);
 
     // Record the size and scaling of the slice
     m_SliceSize[i] = imageSizeInImageSpace[m_ImageAxes[i]];
@@ -243,6 +265,9 @@ GenericSliceModel
 
   // Compute the optimal zoom for this slice
   ComputeOptimalZoom();
+
+  // Set the zoom to optimal zoom for starters
+  m_ViewZoom = m_OptimalZoom;
 
   // Fire a modified event, forcing a repaint of the window
   InvokeEvent(ModelUpdateEvent());
@@ -273,63 +298,62 @@ GenericSliceModel
   SetViewPosition(m_OptimalViewPosition);
 }
 
-Vector3f
-GenericSliceModel
-::MapSliceToImage(const Vector3f &xSlice)
+Vector3d GenericSliceModel::MapSliceToImage(const Vector3d &xSlice)
 {
   assert(IsSliceInitialized());
 
   // Get corresponding position in display space
-  return m_DisplayToImageTransform.TransformPoint(xSlice);
+  return m_DisplayToImageTransform->TransformPoint(xSlice);
+}
+
+Vector3d GenericSliceModel::MapSliceToImagePhysical(const Vector3d &xSlice)
+{
+  Vector3d xImage = this->MapSliceToImage(xSlice);
+  ImageWrapperBase *main = this->GetDriver()->GetCurrentImageData()->GetMain();
+  return main->TransformVoxelCIndexToPosition(xImage);
 }
 
 /**
  * Map a point in image coordinates to slice coordinates
  */
-Vector3f
-GenericSliceModel
-::MapImageToSlice(const Vector3f &xImage)
+Vector3d GenericSliceModel::MapImageToSlice(const Vector3d &xImage)
 {
   assert(IsSliceInitialized());
 
   // Get corresponding position in display space
-  return  m_ImageToDisplayTransform.TransformPoint(xImage);
+  return  m_ImageToDisplayTransform->TransformPoint(xImage);
 }
 
-Vector2f
-GenericSliceModel
-::MapSliceToWindow(const Vector3f &xSlice)
+Vector2d GenericSliceModel::MapSliceToWindow(const Vector3d &xSlice)
 {
   assert(IsSliceInitialized());
 
   // Adjust the slice coordinates by the scaling amounts
-  Vector2f uvScaled(
-    xSlice(0) * m_SliceSpacing(0),xSlice(1) * m_SliceSpacing(1));
+  Vector2d uvScaled(
+    xSlice(0) * m_SliceSpacing(0), xSlice(1) * m_SliceSpacing(1));
 
   // Compute the window coordinates
   Vector2ui size = this->GetCanvasSize();
-  Vector2f uvWindow =
+  Vector2d uvWindow =
     m_ViewZoom * (uvScaled - m_ViewPosition) +
-      Vector2f(0.5f * size[0], 0.5f * size[1]);
+      Vector2d(0.5 * size[0], 0.5 * size[1]);
 
   // That's it, the projection matrix is set up in the scaled-slice coordinates
   return uvWindow;
 }
 
-Vector3f
-GenericSliceModel
-::MapWindowToSlice(const Vector2f &uvWindow)
+Vector3d GenericSliceModel::MapWindowToSlice(const Vector2d &uvWindow)
 {
   assert(IsSliceInitialized() && m_ViewZoom > 0);
 
   // Compute the scaled slice coordinates
   Vector2ui size = this->GetCanvasSize();
-  Vector2f winCenter(0.5f * size[0],0.5f * size[1]);
-  Vector2f uvScaled =
+  Vector2d winCenter(0.5 * size[0],0.5 * size[1]);
+  Vector2d uvScaled =
     m_ViewPosition + (uvWindow - winCenter) / m_ViewZoom;
 
   // The window coordinates are already in the scaled-slice units
-  Vector3f uvSlice(
+  Vector3d uvSlice(
     uvScaled(0) / m_SliceSpacing(0),
     uvScaled(1) / m_SliceSpacing(1),
     this->GetCursorPositionInSliceCoordinates()[2]);
@@ -338,16 +362,14 @@ GenericSliceModel
   return uvSlice;
 }
 
-Vector3f
-GenericSliceModel
-::MapWindowOffsetToSliceOffset(const Vector2f &uvWindowOffset)
+Vector3d GenericSliceModel::MapWindowOffsetToSliceOffset(const Vector2d &uvWindowOffset)
 {
   assert(IsSliceInitialized() && m_ViewZoom > 0);
 
-  Vector2f uvScaled = uvWindowOffset / m_ViewZoom;
+  Vector2d uvScaled = uvWindowOffset / m_ViewZoom;
 
   // The window coordinates are already in the scaled-slice units
-  Vector3f uvSlice(
+  Vector3d uvSlice(
     uvScaled(0) / m_SliceSpacing(0),
     uvScaled(1) / m_SliceSpacing(1),
     0);
@@ -356,27 +378,23 @@ GenericSliceModel
   return uvSlice;
 }
 
-Vector2f
-GenericSliceModel
-::MapSliceToPhysicalWindow(const Vector3f &xSlice)
+Vector2d GenericSliceModel::MapSliceToPhysicalWindow(const Vector3d &xSlice)
 {
   assert(IsSliceInitialized());
 
   // Compute the physical window coordinates
-  Vector2f uvPhysical;
+  Vector2d uvPhysical;
   uvPhysical[0] = xSlice[0] * m_SliceSpacing[0];
   uvPhysical[1] = xSlice[1] * m_SliceSpacing[1];
 
   return uvPhysical;
 }
 
-Vector3f
-GenericSliceModel
-::MapPhysicalWindowToSlice(const Vector2f &uvPhysical)
+Vector3d GenericSliceModel::MapPhysicalWindowToSlice(const Vector2d &uvPhysical)
 {
   assert(IsSliceInitialized());
 
-  Vector3f xSlice;
+  Vector3d xSlice;
   xSlice[0] = uvPhysical[0] / m_SliceSpacing[0];
   xSlice[1] = uvPhysical[1] / m_SliceSpacing[1];
   xSlice[2] = this->GetCursorPositionInSliceCoordinates()[2];
@@ -389,12 +407,12 @@ GenericSliceModel
 ::ResetViewPosition()
 {
   // Compute slice size in spatial coordinates
-  Vector2f worldSize(
+  Vector2d worldSize(
     m_SliceSize[0] * m_SliceSpacing[0],
     m_SliceSize[1] * m_SliceSpacing[1]);
 
   // Set the view position (position of the center of the image?)
-  m_ViewPosition = worldSize * 0.5f;
+  m_ViewPosition = worldSize * 0.5;
 
   // Update view
   InvokeEvent(SliceModelGeometryChangeEvent());
@@ -402,41 +420,39 @@ GenericSliceModel
 
 void
 GenericSliceModel
-::SetViewPositionRelativeToCursor(Vector2f offset)
+::SetViewPositionRelativeToCursor(Vector2d offset)
 {
   // Get the crosshair position
   Vector3ui xCursorInteger = m_Driver->GetCursorPosition();
 
   // Shift the cursor position by by 0.5 in order to have it appear
   // between voxels
-  Vector3f xCursorImage = to_float(xCursorInteger) + Vector3f(0.5f);
+  Vector3d xCursorImage = to_double(xCursorInteger) + Vector3d(0.5);
 
   // Get the cursor position on the slice
-  Vector3f xCursorSlice = MapImageToSlice(xCursorImage);
+  Vector3d xCursorSlice = MapImageToSlice(xCursorImage);
 
   // Subtract from the view position
-  Vector2f vp;
+  Vector2d vp;
   vp[0] = offset[0] + xCursorSlice[0] * m_SliceSpacing[0];
   vp[1] = offset[1] + xCursorSlice[1] * m_SliceSpacing[1];
   SetViewPosition(vp);
 }
 
-Vector2f
-GenericSliceModel
-::GetViewPositionRelativeToCursor()
+Vector2d GenericSliceModel::GetViewPositionRelativeToCursor()
 {
   // Get the crosshair position
   Vector3ui xCursorInteger = m_Driver->GetCursorPosition();
 
   // Shift the cursor position by by 0.5 in order to have it appear
   // between voxels
-  Vector3f xCursorImage = to_float(xCursorInteger) + Vector3f(0.5f);
+  Vector3d xCursorImage = to_double(xCursorInteger) + Vector3d(0.5);
 
   // Get the cursor position on the slice
-  Vector3f xCursorSlice = MapImageToSlice(xCursorImage);
+  Vector3d xCursorSlice = MapImageToSlice(xCursorImage);
 
   // Subtract from the view position
-  Vector2f offset;
+  Vector2d offset;
   offset[0] = m_ViewPosition[0] - xCursorSlice[0] * m_SliceSpacing[0];
   offset[1] = m_ViewPosition[1] - xCursorSlice[1] * m_SliceSpacing[1];
 
@@ -445,11 +461,11 @@ GenericSliceModel
 
 void GenericSliceModel::CenterViewOnCursor()
 {
-  Vector2f offset; offset.fill(0.0f);
+  Vector2d offset; offset.fill(0.0);
   this->SetViewPositionRelativeToCursor(offset);
 }
 
-void GenericSliceModel::SetViewZoom(float zoom)
+void GenericSliceModel::SetViewZoom(double zoom)
 {
   assert(zoom > 0);
   m_ViewZoom = zoom;
@@ -457,10 +473,15 @@ void GenericSliceModel::SetViewZoom(float zoom)
   this->InvokeEvent(SliceModelGeometryChangeEvent());
 }
 
-void GenericSliceModel::ZoomInOrOut(float factor)
+void GenericSliceModel::SetViewZoomInLogicalPixels(double zoom)
 {
-  float oldzoom = m_ViewZoom;
-  float newzoom = oldzoom * factor;
+  this->SetViewZoom(zoom * m_SizeReporter->GetViewportPixelRatio());
+}
+
+void GenericSliceModel::ZoomInOrOut(double factor)
+{
+  double oldzoom = m_ViewZoom;
+  double newzoom = oldzoom * factor;
 
   if( (oldzoom < m_OptimalZoom && newzoom > m_OptimalZoom) ||
       (oldzoom > m_OptimalZoom && newzoom < m_OptimalZoom) )
@@ -469,6 +490,12 @@ void GenericSliceModel::ZoomInOrOut(float factor)
     }
 
   SetViewZoom(newzoom);
+}
+
+double GenericSliceModel::GetViewZoomInLogicalPixels() const
+{
+  double zoom_physical = this->GetViewZoom();
+  return zoom_physical / m_SizeReporter->GetViewportPixelRatio();
 }
 
 /*
@@ -502,12 +529,12 @@ const SliceViewportLayout::SubViewport *GenericSliceModel::GetHoveredViewport()
   return NULL;
 }
 
-Vector3f GenericSliceModel::GetCursorPositionInSliceCoordinates()
+Vector3d GenericSliceModel::GetCursorPositionInSliceCoordinates()
 {
   Vector3ui cursorImageSpace = m_Driver->GetCursorPosition();
-  Vector3f cursorDisplaySpace =
-    m_ImageToDisplayTransform.TransformPoint(
-      to_float(cursorImageSpace) + Vector3f(0.5f));
+  Vector3d cursorDisplaySpace =
+    m_ImageToDisplayTransform->TransformPoint(
+      to_double(cursorImageSpace) + Vector3d(0.5));
   return cursorDisplaySpace;
 }
 
@@ -531,18 +558,18 @@ void GenericSliceModel::ComputeThumbnailProperties()
   const GlobalDisplaySettings *gds = m_ParentUI->GetGlobalDisplaySettings();
 
   // The thumbnail will occupy a specified fraction of the target canvas
-  float xFraction = 0.01f * gds->GetZoomThumbnailSizeInPercent();
+  double xFraction = 0.01 * gds->GetZoomThumbnailSizeInPercent();
 
   // But it must not exceed a predefined size in pixels in either dimension
-  float xThumbMax = gds->GetZoomThumbnailMaximumSize();
+  double xThumbMax = gds->GetZoomThumbnailMaximumSize();
 
   // Recompute the fraction based on maximum size restriction
   Vector2ui size = this->GetCanvasSize();
-  float xNewFraction = xFraction;
+  double xNewFraction = xFraction;
   if( size[0] * xNewFraction > xThumbMax )
-    xNewFraction = xThumbMax * 1.0f / size[0];
+    xNewFraction = xThumbMax * 1.0 / size[0];
   if( size[1] * xNewFraction > xThumbMax )
-    xNewFraction = xThumbMax * 1.0f / size[1];
+    xNewFraction = xThumbMax * 1.0 / size[1];
 
   // Set the position and size of the thumbnail, in pixels
   m_ThumbnailZoom = xNewFraction * m_OptimalZoom;
@@ -565,7 +592,7 @@ void GenericSliceModel::OnSourceDataUpdate()
 }
 */
 
-void GenericSliceModel::SetViewPosition(Vector2f pos)
+void GenericSliceModel::SetViewPosition(Vector2d pos)
 {
   if(m_ViewPosition != pos)
     {
@@ -618,7 +645,7 @@ GenericSliceModel
 ::MergeSliceSegmentation(itk::Image<unsigned char, 2> *drawing)
 {
   // Z position of slice
-  float zpos = this->GetCursorPositionInSliceCoordinates()[2];
+  double zpos = this->GetCursorPositionInSliceCoordinates()[2];
   return m_Driver->UpdateSegmentationWithSliceDrawing(
         drawing, m_DisplayToImageTransform, zpos, "Polygon Drawing");
 }
@@ -632,11 +659,24 @@ Vector2ui GenericSliceModel::GetSize()
   return Vector2ui(viewport[0] / cols, viewport[1] / rows);
 }
 
+Vector2ui GenericSliceModel::GetSizeInLogicalPixels()
+{
+  Vector2ui size = this->GetSize();
+  size[0] = (unsigned int) (size[0] / m_SizeReporter->GetViewportPixelRatio());
+  size[1] = (unsigned int) (size[1] / m_SizeReporter->GetViewportPixelRatio());
+  return size;
+}
+
 Vector2ui GenericSliceModel::GetCanvasSize()
 {
   assert(m_ViewportLayout.vpList.size() > 0);
   assert(!m_ViewportLayout.vpList.front().isThumbnail);
   return m_ViewportLayout.vpList.front().size;
+}
+
+bool GenericSliceModel::IsTiling() const
+{
+  return m_Driver->GetGlobalState()->GetSliceViewLayerLayout() == LAYOUT_TILED;
 }
 
 void GenericSliceModel::GetNonThumbnailViewport(Vector2ui &pos, Vector2ui &size)
@@ -864,8 +904,8 @@ void GenericSliceModel::UpdateViewportLayout()
     }
   else
     {
-    float cell_w = w / ncols;
-    float cell_h = h / nrows;
+    double cell_w = w / ncols;
+    double cell_h = h / nrows;
     for(int irow = 0; irow < nrows; irow++)
       for(int icol = 0; icol < ncols; icol++)
         if(m_ViewportLayout.vpList.size() < n_base_layers)
@@ -878,6 +918,83 @@ void GenericSliceModel::UpdateViewportLayout()
           m_ViewportLayout.vpList.push_back(vp);
           }
     }
+}
+
+void GenericSliceModel::UpdateUpstreamViewportGeometry()
+{
+  // In this function, we have to figure out where the active viewport
+  // is located in the physical image space of ITK-SNAP.
+  GenericImageData *gid = this->GetImageData();
+
+  // Get the display image spec corresponding to the current viewport
+  GenericImageData::ImageBaseType *dispimg = gid->GetDisplayViewportGeometry(this->GetId());
+
+  // Get the primary viewport - this is what affects everything else
+  SliceViewportLayout::SubViewport &vp = m_ViewportLayout.vpList.front();
+
+  // The size of the viewport is fairly easy
+  GenericImageData::RegionType region;
+  region.SetSize(0, vp.size[0]); region.SetSize(1, vp.size[1]); region.SetSize(2, 1);
+
+  // The spacing of the viewport in physical units. This refers to the size of each
+  // pixel. The easiest way to determine this is to map the edges of the viewport to
+  // physical image coordinates
+  Vector2d u[3];
+  Vector3d s[4];
+  Vector3d x[4];
+
+  // Define the corners of the viewport in screen pixel units
+  u[0][0] = 0;
+  u[0][1] = 0;
+  u[1][0] = u[0][0] + vp.size[0]; u[1][1] = u[0][1];
+  u[2][0] = u[0][0]; u[2][1] = u[0][1] + vp.size[1];
+
+  // Map into slice coordinates, adding the third dimension
+  s[0] = this->MapWindowToSlice(u[0]);
+  s[1] = this->MapWindowToSlice(u[1]);
+  s[2] = this->MapWindowToSlice(u[2]);
+  s[3] = this->MapWindowToSlice(u[0]);
+  s[3][2] += m_DisplayToImageTransform->GetCoordinateOrientation(2);
+
+  // Map these four points into the physical image space
+  for(int i = 0; i < 4; i++)
+    {
+    // Shift by half-voxel in the in-plane dimensions
+    s[i][0] -= this->GetDisplayToImageTransform()->GetCoordinateOrientation(0) * 0.5;
+    s[i][1] -= this->GetDisplayToImageTransform()->GetCoordinateOrientation(1) * 0.5;
+
+    itk::ContinuousIndex<double, 3> j = to_itkContinuousIndex(this->MapSliceToImage(s[i]));
+    itk::Point<double, 3> px;
+    gid->GetMain()->GetImageBase()->TransformContinuousIndexToPhysicalPoint(j, px);
+    x[i] = Vector3d(px);
+    }
+
+  // Spacing - divide the length of each edge by the size in voxels
+  GenericImageData::ImageBaseType::SpacingType spacing;
+  spacing[0] = (x[1] - x[0]).magnitude() / vp.size[0];
+  spacing[1] = (x[2] - x[0]).magnitude() / vp.size[1];
+  spacing[2] = (x[3] - x[0]).magnitude();
+
+  // Origin - the coordinates of the first point, plus a half-voxel
+  Vector3d origin = x[0];
+  origin += (x[1] - x[0]) / (2.0 * vp.size[0]);
+  origin += (x[2] - x[0]) / (2.0 * vp.size[1]);
+  origin -= (x[3] - x[0]) / 2.0;
+
+  // Direction cosines - these are the normalized directions
+  GenericImageData::ImageBaseType::DirectionType dir;
+  for(int col = 0; col < 3; col++)
+    {
+    Vector3d dirvec = (x[col+1] - x[0]).normalize();
+    for(int row = 0; row < 3; row++)
+      dir(row, col) = dirvec[row];
+    }
+
+  // Set all of the parameters for the reference image
+  dispimg->SetSpacing(spacing);
+  dispimg->SetOrigin(to_itkPoint(origin));
+  dispimg->SetDirection(dir);
+  dispimg->SetRegions(region);
 }
 
 ImageWrapperBase *GenericSliceModel::GetLayerForNthTile(int row, int col)

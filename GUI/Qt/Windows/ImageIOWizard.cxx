@@ -20,6 +20,7 @@
 #include <QGridLayout>
 #include <QSpinBox>
 #include <QFrame>
+#include <QTimer>
 
 
 #include <QtCursorOverride.h>
@@ -34,8 +35,9 @@
 #include "SNAPQtCommon.h"
 #include "FileChooserPanelWithHistory.h"
 
-#include "ImageIOWizard/RegistrationPage.h"
 #include "ImageIOWizard/OverlayRolePage.h"
+
+#include "DICOMListingTable.h"
 
 
 namespace imageiowiz {
@@ -172,6 +174,14 @@ SelectFilePage::SelectFilePage(QWidget *parent)
   connect(wiz, SIGNAL(accepted()), m_FilePanel, SLOT(onFilenameAccept()));
 }
 
+void SelectFilePage::SetFilename(
+    const std::string &filename,
+    GuidedNativeImageIO::FileFormat format)
+{
+  m_FilePanel->setFilename(from_utf8(filename));
+  m_FilePanel->setActiveFormat(from_utf8(m_Model->GetFileFormatName(format)));
+}
+
 /*
 class QtRegistryTableModel : public QAbstractTableModel
 {
@@ -212,10 +222,18 @@ void SelectFilePage::initializePage()
 
   // Determine the active format to use
   QString activeFormat;
+
   if(m_Model->IsSaveMode())
     activeFormat = from_utf8(m_Model->GetDefaultFormatForSave());
+
   if(m_Model->GetSelectedFormat() < GuidedNativeImageIO::FORMAT_COUNT)
+    {
     activeFormat = from_utf8(m_Model->GetFileFormatName(m_Model->GetSelectedFormat()));
+    }
+  else if(m_Model->GetSuggestedFormat() < GuidedNativeImageIO::FORMAT_COUNT)
+    {
+    activeFormat = from_utf8(m_Model->GetFileFormatName(m_Model->GetSuggestedFormat()));
+    }
 
   // Initialize the file panel
   if(m_Model->IsLoadMode())
@@ -268,19 +286,7 @@ bool SelectFilePage::validatePage()
 
   // If format is DICOM, process the DICOM directory
   if(fmt == GuidedNativeImageIO::FORMAT_DICOM_DIR)
-    {
-    // Change cursor until this object moves out of scope
-    QtCursorOverride curse(Qt::WaitCursor);
-    try
-      {
-      m_Model->ProcessDicomDirectory(to_utf8(m_FilePanel->absoluteFilename()));
-      return true;
-      }
-    catch(IRISException &exc)
-      {
-      return ErrorMessage(exc);
-      }
-    }
+    return true;
 
   // Save or load the image
   return this->PerformIO();
@@ -288,32 +294,9 @@ bool SelectFilePage::validatePage()
 
 void SelectFilePage::onFilenameChanged(QString absoluteFilename)
 {
-  bool file_exists = false;
-
-  // The file format for the checkbox
-  /*
-  GuidedNativeImageIO::FileFormat fmt =
-      m_Model->GuessFileFormat(to_utf8(absoluteFilename), file_exists);
-
-  if(fmt != GuidedNativeImageIO::FORMAT_COUNT)
-    m_FilePanel->setActiveFormat(m_InFormat->currentText());
-    */
-
   // Is it a directory?
   if(QFileInfo(absoluteFilename).isDir())
     return;
-/*
-  // Add some messages to help the user
-  if(fmt == GuidedNativeImageIO::FORMAT_COUNT)
-    {
-    if(!m_FilePanel->errorText().length())
-      m_FilePanel->setErrorText("The format can not be determined from the file name.");
-    }
-  else if(!m_Model->CanHandleFileFormat(fmt))
-    {
-    if(!m_FilePanel->errorText().length())
-      m_FilePanel->setErrorText("The format is not supported for this operation.");
-    }*/
 
   emit completeChanged();
 }
@@ -430,16 +413,10 @@ DICOMPage::DICOMPage(QWidget *parent)
   : AbstractPage(parent)
 {
   // Set up a table widget
-  m_Table = new QTableWidget();
+  m_Table = new DICOMListingTable();
   QVBoxLayout *lo = new QVBoxLayout(this);
   lo->addWidget(m_Table);
   lo->addWidget(m_OutMessage);
-
-  m_Table->setSelectionBehavior(QAbstractItemView::SelectRows);
-  m_Table->setSelectionMode(QAbstractItemView::SingleSelection);
-  m_Table->setAlternatingRowColors(true);
-  m_Table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  m_Table->verticalHeader()->hide();
 
   connect(m_Table->selectionModel(),
           SIGNAL(selectionChanged(QItemSelection,QItemSelection)),
@@ -451,46 +428,67 @@ void DICOMPage::initializePage()
   // Set the title, subtitle
   setTitle("Select DICOM series to open");
 
-  // Populate the DICOM page
-  const std::vector<Registry> &reg = m_Model->GetDicomContents();
+  // Process the DICOM directory on a timer - so that the GUI shows first
+  QTimer::singleShot(0, this, SLOT(processDicomDirectory()));
+}
 
-  m_Table->setRowCount(reg.size());
-  m_Table->setColumnCount(4);
-  m_Table->setHorizontalHeaderItem(0, new QTableWidgetItem("Series Number"));
-  m_Table->setHorizontalHeaderItem(1, new QTableWidgetItem("Description"));
-  m_Table->setHorizontalHeaderItem(2, new QTableWidgetItem("Dimensions"));
-  m_Table->setHorizontalHeaderItem(3, new QTableWidgetItem("Number of Images"));
+void DICOMPage::cleanupPage()
+{
+  AbstractPage::cleanupPage();
+}
 
-  for(size_t i = 0; i < reg.size(); i++)
+#include "ProcessEventsITKCommand.h"
+
+void DICOMPage::processDicomDirectory()
+{
+  // Change cursor until this object moves out of scope
+  QtCursorOverride curse(Qt::WaitCursor); (void) curse;
+
+  // Disable the buttons until we finish loading
+  this->setEnabled(false);
+
+  try
     {
-    Registry r = reg[i];
-    m_Table->setItem(i, 0, new QTableWidgetItem(r["SeriesNumber"][""]));
-    m_Table->setItem(i, 1, new QTableWidgetItem(r["SeriesDescription"][""]));
-    m_Table->setItem(i, 2, new QTableWidgetItem(r["Dimensions"][""]));
-    m_Table->setItem(i, 3, new QTableWidgetItem(r["NumberOfImages"][""]));
+    // Callback that will handle progress of DICOM loading
+    SmartPtr<ProcessEventsITKCommand> cmd = ProcessEventsITKCommand::New();
+
+    // Timer that will call a slot at regular intervals to update the table
+    QTimer timer;
+    connect(&timer, SIGNAL(timeout()), this, SLOT(updateTable()));
+    timer.start(100);
+
+    // Get the DICOM directory contents. The command and the timer make sure
+    // that the table of DICOM entries is updated every 100 ms
+    m_Model->ProcessDicomDirectory(to_utf8(field("Filename").toString()), cmd);
+
+    // Stop the timer
+    timer.stop();
+
+    // Update the data
+    this->updateTable();
+    }
+  catch(IRISException &exc)
+    {
+    ErrorMessage(exc);
     }
 
-  m_Table->resizeColumnsToContents();
-  m_Table->resizeRowsToContents();
+  // Enable the buttons until we finish loading
+  this->setEnabled(true);
+}
 
-  // If only one sequence selected, pick it
-  if(reg.size() == 1)
+void DICOMPage::updateTable()
+{
+  // Get the list of existing series
+  // TODO: this is a cluge!
+  std::list<std::string> series_ids = m_Model->GetFoundDicomSeriesIds();
+  std::vector<Registry> reg;
+  for(std::list<std::string>::const_iterator it = series_ids.begin();
+      it != series_ids.end(); ++it)
     {
-    m_Table->selectRow(0);
+    reg.push_back(m_Model->GetFoundDicomSeriesMetaData(*it));
     }
 
-  // Choose the sequence previously loaded
-  // TODO:
-
-  /*
-  // See if one of the sequences in the registry matches
-  StringType last = m_Registry["DICOM.SequenceId"]["NULL"];
-  const Fl_Menu_Item *lastpos = m_InDICOMPageSequenceId->find_item(last.c_str());
-  if(lastpos)
-    m_InDICOMPageSequenceId->value(lastpos);
-  else
-    m_InDICOMPageSequenceId->value(0);
-  */
+  m_Table->setData(reg);
 }
 
 bool DICOMPage::validatePage()
@@ -498,13 +496,15 @@ bool DICOMPage::validatePage()
   // Clear error state
   m_OutMessage->clear();
 
-  // Add registry entries for the selected DICOM series
+  // Get the data associated with the selected row
   int row = m_Table->selectionModel()->selectedRows().front().row();
+  std::string series_id =
+      to_utf8(m_Table->item(row, 0)->data(Qt::UserRole).toString());
 
   try
     {
     QtCursorOverride curse(Qt::WaitCursor);
-    m_Model->LoadDicomSeries(to_utf8(this->field("Filename").toString()), row);
+    m_Model->LoadDicomSeries(to_utf8(this->field("Filename").toString()), series_id);
     }
   catch(IRISException &exc)
     {
@@ -544,6 +544,9 @@ RawPage::RawPage(QWidget *parent)
     {
     m_Dims[i] = new QSpinBox();
     connect(m_Dims[i], SIGNAL(valueChanged(int)), SLOT(onHeaderSizeChange()));
+
+    m_Spacing[i] = new QDoubleSpinBox();
+    m_Spacing[i]->setValue(1.0);
     }
 
   lo->addWidget(new QLabel("Image dimensions:"), 1, 0, 1, 1);
@@ -607,7 +610,19 @@ RawPage::RawPage(QWidget *parent)
   lo->addWidget(lbrace, 5, 3, 2, 1);
   lo->addWidget(new QLabel("should be equal"), 5, 4, 2, 2);
 
-  lo->addWidget(m_OutMessage, 7, 0, 1, 7);
+  // Add some space
+  lo->setRowMinimumHeight(6,16);
+
+  lo->addWidget(new QLabel("Voxel Spacing:"), 7, 0, 1, 1);
+  lo->addWidget(new QLabel("x:"), 7, 1, 1, 1);
+  lo->addWidget(m_Spacing[0], 7, 2, 1, 1);
+  lo->addWidget(new QLabel("y:"), 7, 3, 1, 1);
+  lo->addWidget(m_Spacing[1], 7, 4, 1, 1);
+  lo->addWidget(new QLabel("z:"), 7, 5, 1, 1);
+  lo->addWidget(m_Spacing[2], 7, 6, 1, 1);
+
+
+  lo->addWidget(m_OutMessage, 9, 0, 1, 7);
 
   // The output label
   lo->setColumnMinimumWidth(0, 140);
@@ -663,6 +678,13 @@ void RawPage::initializePage()
     m_Dims[i]->setRange(1, m_FileSize);
     }
 
+  // Set the spacing
+  Vector3d spc = hint["Raw.Spacing"][Vector3d(1.0)];
+  for(size_t i = 0; i < 3; i++)
+    {
+    m_Spacing[i]->setValue(spc[i]);
+    }
+
   // Set the data type (default to uchar)
   int ipt = (int) (GuidedNativeImageIO::GetPixelType(
         hint, GuidedNativeImageIO::PIXELTYPE_UCHAR) -
@@ -688,6 +710,10 @@ bool RawPage::validatePage()
   // Set the dimensions
   hint["Raw.Dimensions"] << Vector3i(
     m_Dims[0]->value(), m_Dims[1]->value(), m_Dims[2]->value());
+
+  // Set the spacing
+  hint["Raw.Spacing"] << Vector3d(
+    m_Spacing[0]->value(), m_Spacing[1]->value(), m_Spacing[2]->value());
 
   // Set the endianness
   hint["Raw.BigEndian"] << ( m_InEndian->currentIndex() == 0 );
@@ -745,7 +771,6 @@ ImageIOWizard::ImageIOWizard(QWidget *parent) :
   setPage(Page_Summary, new SummaryPage(this));
   setPage(Page_DICOM, new DICOMPage(this));
   setPage(Page_Raw, new RawPage(this));
-  setPage(Page_Coreg, new RegistrationPage(this));
   setPage(Page_OverlayRole, new OverlayRolePage(this));
 
 }
@@ -765,6 +790,13 @@ void ImageIOWizard::SetModel(ImageIOWizardModel *model)
     this->setWindowTitle("Open Image - ITK-SNAP");
   else
     this->setWindowTitle("Save Image - ITK-SNAP");
+}
+
+void ImageIOWizard::SetFilename(const std::string &filename,
+                                GuidedNativeImageIO::FileFormat format)
+{
+  SelectFilePage *pFile = static_cast<SelectFilePage *>(this->page(Page_File));
+  pFile->SetFilename(filename, format);
 }
 
 int ImageIOWizard::nextId() const
@@ -791,10 +823,6 @@ int ImageIOWizard::nextId() const
     if(m_Model->IsOverlay())
       pages.push_back(Page_OverlayRole);
 
-    // Registration page
-    if(m_Model->GetUseRegistration())
-      pages.push_back(Page_Coreg);
-
     // Summary page
     pages.push_back(Page_Summary);
     pages.push_back(-1);
@@ -819,9 +847,7 @@ int ImageIOWizard::nextId() const
 
 int ImageIOWizard::nextPageAfterLoad()
 {
-  if(m_Model->GetUseRegistration())
-    return ImageIOWizard::Page_Coreg;
-  else if(m_Model->IsOverlay() && m_Model->IsLoadMode())
+  if(m_Model->IsOverlay() && m_Model->IsLoadMode())
     return ImageIOWizard::Page_OverlayRole;
   else
     return ImageIOWizard::Page_Summary;

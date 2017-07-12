@@ -46,11 +46,11 @@ void SliceWindowDecorationRenderer::DrawOrientationLabels()
     {
     // Which axis are we on in anatomy space?
     unsigned int anatomyAxis =
-        parentModel->GetDisplayToAnatomyTransform().GetCoordinateIndexZeroBased(i);
+        parentModel->GetDisplayToAnatomyTransform()->GetCoordinateIndexZeroBased(i);
 
     // Which direction is the axis facing (returns -1 or 1)
     unsigned int anatomyAxisDirection =
-        parentModel->GetDisplayToAnatomyTransform().GetCoordinateOrientation(i);
+        parentModel->GetDisplayToAnatomyTransform()->GetCoordinateOrientation(i);
 
     // Map the direction onto 0 or 1
     unsigned int letterIndex = (1 + anatomyAxisDirection) >> 1;
@@ -109,6 +109,8 @@ std::string SliceWindowDecorationRenderer::GetDisplayText(ImageWrapperBase *laye
     MultiChannelDisplayMode mode = policy->GetDisplayMode();
     if(mode.UseRGB)
       nickname += " [RGB]";
+    else if(mode.RenderAsGrid)
+      nickname += " [Grid]";
     else if(mode.SelectedScalarRep == SCALAR_REP_MAGNITUDE)
       nickname += " [Mag]";
     else if(mode.SelectedScalarRep == SCALAR_REP_MAX)

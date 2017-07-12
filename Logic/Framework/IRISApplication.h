@@ -36,6 +36,7 @@
 #ifndef __IRISApplication_h_
 #define __IRISApplication_h_
 
+#include "ImageWrapperTraits.h"
 #include "ImageCoordinateTransform.h"
 #include "IRISDisplayGeometry.h"
 #include "itkImageRegion.h"
@@ -60,17 +61,18 @@ class ThresholdSettings;
 class EdgePreprocessingSettings;
 class AbstractSlicePreviewFilterWrapper;
 class UnsupervisedClustering;
-class RFClassificationEngine;
 class ImageWrapperBase;
 class MeshManager;
 class AbstractLoadImageDelegate;
 class AbstractSaveImageDelegate;
 class IRISWarningList;
 class GaussianMixtureModel;
-class RandomForestClassifier;
 struct IRISDisplayGeometry;
 class LabelUseHistory;
 class ImageAnnotationData;
+
+template <class TPixel, class TLabel, int VDim> class RandomForestClassifier;
+template <class TPixel, class TLabel, int VDim> class RFClassificationEngine;
 
 template <class TTraits> class PresetManager;
 class ColorMapPresetTraits;
@@ -89,6 +91,7 @@ template <typename TIn, typename TVIn, typename TOut> class GMMClassifyImageFilt
 namespace itk {
   template <class TPixel, unsigned int VDimension> class Image;
   template <class TPixel, unsigned int VDimension> class VectorImage;
+  template <class TParametersValueType> class TransformBaseTemplate;
 }
 
 
@@ -122,7 +125,10 @@ public:
   // The internal representation of anatomical images
   typedef itk::VectorImage<GreyType, 3> AnatomyImageType;
 
-  typedef itk::Image<LabelType,3> LabelImageType;
+  //typedef RLEImage<LabelType> LabelImageType;
+  //avoid duplicating definition of LabelImageType, like this:
+  typedef LabelImageWrapperTraits::ImageType LabelImageType;
+
   typedef itk::Image<short ,3> SpeedImageType;
   typedef itk::Command CommandType;
 
@@ -131,6 +137,22 @@ public:
 
   // Bubble array
   typedef std::vector<Bubble> BubbleArray;
+
+  // Structure for listing DICOM series ids (SeriesId/LayerId pair)
+  struct DicomSeriesDescriptor
+  {
+    std::string series_id;
+    std::string series_desc;
+    std::string dimensions;
+    unsigned long layer_uid;  // links back to the loaded layer
+  };
+
+  typedef std::list<DicomSeriesDescriptor> DicomSeriesListing;
+  typedef std::map<std::string, DicomSeriesListing> DicomSeriesTree;
+
+  // Classifier stuff
+  typedef RFClassificationEngine<GreyType, LabelType, 3> RFEngine;
+  typedef RandomForestClassifier<GreyType, LabelType, 3> RFClassifier;
 
   // Declare events fired by this object
   FIRES(CursorUpdateEvent)
@@ -182,10 +204,39 @@ public:
    * of this class to different layer roles (main image, overlay). The warnings
    * generated in the course of the IO operation are stored in the passed in
    * warning list object;
+   *
+   * By default the IO hints are obtained from the association files, i.e. by
+   * looking up the hints associated with fname in the user's application data
+   * directory. But it is also possible to provide a pointer to the ioHints, i.e.,
+   * if the image is being as part of loading a workspace.
    */
-  void LoadImageViaDelegate(const char *fname,
-                            AbstractLoadImageDelegate *del,
-                            IRISWarningList &wl);
+  ImageWrapperBase* LoadImageViaDelegate(const char *fname,
+                                         AbstractLoadImageDelegate *del,
+                                         IRISWarningList &wl,
+                                         Registry *ioHints = NULL);
+
+  /**
+   * List available additional DICOM series that can be loaded given the currently
+   * loaded DICOM images. This creates a listing of 'sibling' DICOM series Ids,
+   * grouped by the directory of the DICOM data
+   */
+  DicomSeriesTree ListAvailableSiblingDicomSeries();
+
+  /**
+   * Load another dicom series via delegate. This is similar to LoadImageViaDelegate
+   * but the input is a SeriesId assumed to be in the same DICOM directory as the
+   * main image
+   */
+  void LoadAnotherDicomSeriesViaDelegate(unsigned long reference_layer_id,
+                                         const char *series_id,
+                                         AbstractLoadImageDelegate *del,
+                                         IRISWarningList &wl);
+
+  /**
+   * Assign a nickname to an image layer based on its DICOM metadata. For now this
+   * implementation uses just the "Series Description" field.
+   */
+  void AssignNicknameFromDicomMetadata(ImageWrapperBase *layer);
 
   /**
    * Load an image for a particular role using the default delegate for this role.
@@ -195,7 +246,9 @@ public:
    * the provided Registry object.
    */
   void LoadImage(const char *fname, LayerRole role,
-                 IRISWarningList &wl, Registry *meta_data_reg = NULL);
+                 IRISWarningList &wl,
+                 Registry *meta_data_reg = NULL,
+                 Registry *io_hints_reg = NULL);
 
   /**
    * Create a delegate for saving an image interactively or non-interactively
@@ -219,17 +272,12 @@ public:
   void AddIRISOverlayImage(GuidedNativeImageIO *nativeIO, Registry *metadata = NULL);
 
   /**
-   * Add an overlay image that resides in its native space, but is transformed into
-   * the space of the main image using a set of transformation parameters (e.g., rigid
-   * transform)
-   */
-  void AddIRISCoregOverlayImage(GuidedNativeImageIO *io, Registry *metadata);
-
-  /**
    * Add a 'derived' overlay, i.e., an overlay generated using image processing from one
    * of the existing image layers
    */
-  void AddDerivedOverlayImage(ImageWrapperBase *overlay);
+  void AddDerivedOverlayImage(const ImageWrapperBase *sourceLayer,
+                              ImageWrapperBase *overlay,
+                              bool inherit_colormap);
 
   /**
    * Remove a specific overlay
@@ -428,35 +476,6 @@ public:
   LabelType DrawOverLabel(LabelType iTarget);
 
   /**
-   * Method that signals the beginning of segmentation update operation. This
-   * method should be used in conjuction with UpdateSegmentationVoxel method
-   * to apply current drawing properties to a set of voxels
-   *
-   * These methods don't perform error checking - it's the user's responsibility
-   * to call them in the correct order. The methods are not currently reentrant
-   * (i.e., should not be used by multiple threads).
-   *
-   * TODO: this is currently only being used for spray paint. But this set of
-   * methods should be expanded with a method that works with itk iterators and
-   * should be made the main entrypoint for changing segmentations. This will
-   * especially be necessary for RLE segmentation management.
-   *
-   */
-  void BeginSegmentationUpdate(std::string undo_name);
-
-  /**
-   * Apply the current drawing label to a voxel. Depending on coverage mode
-   * and the voxel's current label, the label of the voxel may be changed
-   */
-  void UpdateSegmentationVoxel(const Vector3ui &pos);
-
-  /**
-   * Complete the segmentation update. Returns the actual number of voxels
-   * relabeled since BeginSegmentationUpdate();
-   */
-  int EndSegmentationUpdate();
-
-  /**
    * Really simple replacement of one label with another. Returns the 
    * number of voxels changed.
    */
@@ -471,7 +490,7 @@ public:
    * Cut the segmentation using a plane and relabed the segmentation
    * on the side of that plane
    */
-  void RelabelSegmentationWithCutPlane(
+  int RelabelSegmentationWithCutPlane(
     const Vector3d &normal, double intercept);
 
   /**
@@ -497,13 +516,6 @@ public:
     Save label descriptions to file
     */
   void SaveLabelDescriptions(const char *filename);
-
-  /**
-   * Store the current state as an undo point, allowing the user to revert
-   * to this state at a later point. The state in this context is just the
-   * segmentation image in IRIS.
-   */
-  void StoreUndoPoint(const char *text);
 
   /** 
    * Clear all the undo points, e.g., after an operation that can not be
@@ -534,7 +546,7 @@ public:
     */
   unsigned int UpdateSegmentationWithSliceDrawing(
       SliceBinaryImageType *drawing,
-      const ImageCoordinateTransform &xfmSliceToImage,
+      const ImageCoordinateTransform *xfmSliceToImage,
       double zSlice,
       const std::string &undoTitle);
 
@@ -548,7 +560,7 @@ public:
   irisGetMacro(ClusteringEngine, UnsupervisedClustering *)
 
   /** Get the object used to drive the supervised classification */
-  irisGetMacro(ClassificationEngine, RFClassificationEngine *)
+  irisGetMacro(ClassificationEngine, RFEngine *)
 
   /** Set the current snake mode. This method should be called instead of the
       method in GlobalState because when the snake mode is set, some changes
@@ -608,6 +620,12 @@ public:
    * Save annotations to file
    */
   void SaveAnnotations(const char *filename);
+
+  /**
+   * Record the fact that the current active label and draw over label were used.
+   * This is to maintain a history of commonly used labels.
+   */
+  void RecordCurrentLabelUse();
 
 protected:
 
@@ -682,12 +700,12 @@ protected:
   SmartPtr<UnsupervisedClustering> m_ClusteringEngine;
 
   // The Random Foreset classification object
-  SmartPtr<RFClassificationEngine> m_ClassificationEngine;
+  SmartPtr<RFEngine> m_ClassificationEngine;
 
   // The last classifier used for random forest segmentation. This is reused during
   // repeated calls to the active contour segmentation, as long as the layers haven't
   // been updated.
-  SmartPtr<RandomForestClassifier> m_LastUsedRFClassifier;
+  SmartPtr<RFClassifier> m_LastUsedRFClassifier;
 
   // The number of components for the last used RF classifier
   int m_LastUsedRFClassifierComponents;
@@ -703,10 +721,6 @@ protected:
 
   // Array of bubbles
   BubbleArray m_BubbleArray;
-
-  // State used in conjunction with BeginSegmentationUpdate/EndSegmentationUpdate
-  std::string m_SegmentationUpdateName;
-  unsigned int m_SegmentationChangeCount;
 
   // Save metadata for a layer to the associations file
   void SaveMetaDataAssociatedWithLayer(ImageWrapperBase *layer, int role,
@@ -737,7 +751,13 @@ protected:
   // Auto-adjust contrast of a layer on load
   void AutoContrastLayerOnLoad(ImageWrapperBase *layer);
 
+  typedef ImageWrapperBase::ITKTransformType ITKTransformType;
 
+  // Read transform from project registry
+  SmartPtr<ITKTransformType> ReadTransform(Registry *reg, bool &is_identity);
+
+  // Write transform to project registry
+  void WriteTransform(Registry *reg, const ITKTransformType *transform);
 };
 
 #endif // __IRISApplication_h_

@@ -11,7 +11,7 @@ class vtkFloatArray;
 class vtkPlot;
 class vtkTable;
 
-class ImageIOWizardModel;
+class RegistrationModel;
 
 class OptimizationProgressRenderer : public AbstractVTKSceneRenderer
 {
@@ -19,7 +19,13 @@ public:
 
   irisITKObjectMacro(OptimizationProgressRenderer, AbstractVTKSceneRenderer)
 
-  void SetModel(ImageIOWizardModel *model);
+  void SetModel(RegistrationModel *model);
+
+  itkGetMacro(PyramidLevel, int)
+  itkSetMacro(PyramidLevel, int)
+
+  itkGetMacro(PyramidZoom, int)
+  itkSetMacro(PyramidZoom, int)
 
   void OnUpdate();
 
@@ -31,7 +37,7 @@ protected:
 
   virtual ~OptimizationProgressRenderer() {}
 
-  ImageIOWizardModel *m_Model;
+  RegistrationModel *m_Model;
 
   // Rendering stuff
   vtkSmartPointer<vtkChartXY> m_Chart;
@@ -41,6 +47,9 @@ protected:
 
   // Range of values
   double m_MinValue, m_MaxValue;
+
+  // Pyramid level that this plots
+  int m_PyramidLevel, m_PyramidZoom;
 };
 
 #endif // OPTIMIZATIONPROGRESSRENDERER_H

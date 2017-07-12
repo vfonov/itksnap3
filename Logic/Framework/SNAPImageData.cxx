@@ -43,7 +43,6 @@
 #include "itkEllipseSpatialObject.h"
 #include "itkSpatialObjectToImageFilter.h"
 #include "itkMaximumImageFilter.h"
-#include "itkDanielssonDistanceMapImageFilter.h"
 #include "itkSubtractImageFilter.h"
 #include "itkUnaryFunctorImageFilter.h"
 #include "itkFastMutexLock.h"
@@ -52,7 +51,6 @@
 #include "GlobalState.h"
 #include "EdgePreprocessingImageFilter.h"
 #include "IRISVectorTypesToITKConversion.h"
-#include "SignedDistanceFilter.h"
 #include "IRISException.h"
 #include "IRISApplication.h"
 #include "ThresholdSettings.h"
@@ -528,7 +526,6 @@ void SNAPImageData::SwapLabelImageWithCompressedAlternative()
 
   // Clear the undo manager
   this->m_UndoManager.Clear();
-  this->m_UndoManager.SetCumulativeDelta(m_CompressedAlternateLabelImage);
 
   // Decompress the currently saved alternative
   if(m_CompressedAlternateLabelImage)
@@ -538,7 +535,7 @@ void SNAPImageData::SwapLabelImageWithCompressedAlternative()
       {
       LabelType value = m_CompressedAlternateLabelImage->GetRLEValue(i);
       for(size_t j = 0; j < m_CompressedAlternateLabelImage->GetRLELength(i); ++j, ++it_write)
-        it_write.Value() = value;
+        it_write.Set(value);
       }
     }
   else

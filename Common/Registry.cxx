@@ -343,12 +343,52 @@ Registry
 ::SetFlagAddIfNotFound(bool yesno) 
 {
   // Set the internal value
-    m_AddIfNotFound = yesno;
+  m_AddIfNotFound = yesno;
 
   // Propagate to all the children folders
   for(FolderIterator itf = m_FolderMap.begin(); itf != m_FolderMap.end(); ++itf)
     {
     itf->second->SetFlagAddIfNotFound(yesno);
+    }
+}
+
+void Registry::CleanEmptyFolders()
+{
+  // Iterate over all the subfolders
+  FolderMapType::iterator itf = m_FolderMap.begin();
+  while(itf != m_FolderMap.end())
+    {
+    itf->second->CleanEmptyFolders();
+    if(itf->second->IsEmpty())
+      m_FolderMap.erase(itf++);
+    else
+      itf++;
+    }
+}
+
+bool Registry::IsZeroSizeArray()
+{
+  return
+      this->HasEntry("ArraySize") &&
+      this->Entry("ArraySize")[(unsigned int) 0] == 0 &&
+      this->m_EntryMap.size() == 1 &&
+      this->m_FolderMap.size() == 0;
+}
+
+void Registry::CleanZeroSizeArrays()
+{
+  // Iterate over all the subfolders
+  FolderMapType::iterator itf = m_FolderMap.begin();
+  while(itf != m_FolderMap.end())
+    {
+    // Do the recursive part
+    itf->second->CleanZeroSizeArrays();
+
+    // Check if it has the array size key
+    if(itf->second->IsZeroSizeArray())
+      m_FolderMap.erase(itf++);
+    else
+      itf++;
     }
 }
 
@@ -432,6 +472,11 @@ Registry
 {
   m_EntryMap.clear();
   m_FolderMap.clear();
+}
+
+bool Registry::IsEmpty() const
+{
+  return m_EntryMap.size() == 0 && m_FolderMap.size() == 0;
 }
 
 Registry::StringType
@@ -645,12 +690,25 @@ Registry
   ReadFromFile(fname);
 }
 
+Registry::Registry(const Registry &source)
+{
+  *this = source;
+}
+
+void Registry::operator =(const Registry &source)
+{
+  this->Clear();
+  this->Update(source);
+  this->m_AddIfNotFound = source.m_AddIfNotFound;
+}
+
+
 Registry::
 ~Registry() 
 {
   // Delete all the sub-folders
-  // for(FolderIterator itf = m_FolderMap.begin(); itf != m_FolderMap.end(); ++itf)
-  //  delete itf->second;
+  for(FolderIterator itf = m_FolderMap.begin(); itf != m_FolderMap.end(); ++itf)
+    delete itf->second;
 }
 
 bool Registry::operator == (const Registry &other) const
@@ -663,7 +721,9 @@ bool Registry::operator == (const Registry &other) const
       it1 != m_FolderMap.end(); ++it1, ++it2)
     {
     // Compare keys
-    if(it1->first != it2->first)
+    const StringType &key1 = it1->first;
+    const StringType &key2 = it2->first;
+    if(key1 != key2)
       return false;
 
     // Compare subfolder contents (recursively)
@@ -679,7 +739,9 @@ bool Registry::operator == (const Registry &other) const
       it1 != m_EntryMap.end(); ++it1, ++it2)
     {
     // Compare keys
-    if(it1->first != it2->first)
+    const StringType &key1 = it1->first;
+    const StringType &key2 = it2->first;
+    if(key1 != key2)
       return false;
 
     // Compare subfolder contents (recursively)

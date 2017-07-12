@@ -41,11 +41,14 @@
 #include "vtkSmartPointer.h"
 #include "itksys/MD5.h"
 #include "itkObjectFactory.h"
+#include "ImageWrapperTraits.h"
+#include "RLERegionOfInterestImageFilter.h"
+#include "RLEImageScanlineIterator.h"
+
 
 // Forward reference to itk classes
 namespace itk {
   template <class TPixel,unsigned int VDimension> class Image;
-  template <class TInputImage, class TOutputImage> class RegionOfInterestImageFilter;
   template <class TInputImage, class TOutputImage> class BinaryThresholdImageFilter;
   template <class TImage> class ImageLinearConstIteratorWithIndex;
 }
@@ -72,10 +75,33 @@ class MultiLabelMeshPipeline : public itk::Object
 {
 public:
 
+  // Cached information about a VTK mesh
+  struct MeshInfo
+  {
+    // The pointer to the mesh
+    vtkSmartPointer<vtkPolyData> Mesh;
+
+    // The checksum for the mesh
+    unsigned long CheckSum;
+
+    // The extents of the bounding box
+    Vector3i BoundingBox[2];
+
+    // The number of voxels
+    unsigned long Count;
+
+    MeshInfo();
+    ~MeshInfo();
+  };
+
+  // Collection of mesh data for labels present in the image
+  typedef std::map<LabelType, MeshInfo> MeshInfoMap;
+
+
   irisITKObjectMacro(MultiLabelMeshPipeline, itk::Object)
 
   /** Input image type */
-  typedef itk::Image<LabelType,3> InputImageType;
+  typedef LabelImageWrapperTraits::ImageType InputImageType;
   typedef itk::SmartPointer<InputImageType> InputImagePointer;
   
   /** Set the input segmentation image */
@@ -86,6 +112,8 @@ public:
   unsigned long ComputeBoundingBoxes();
 
   unsigned long GetVoxelsInBoundingBox(LabelType label) const;
+
+  const MeshInfoMap& GetMeshInfo() { return m_MeshInfo; }
 
   /** Set the mesh options for this filter */
   void SetMeshOptions(const MeshOptions *options);
@@ -144,27 +172,6 @@ private:
   // standardized range
   ThresholdFilterPointer      m_ThrehsoldFilter;
 
-  // Cached information about a VTK mesh
-  struct MeshInfo
-  {
-    // The pointer to the mesh
-    vtkSmartPointer<vtkPolyData> Mesh;
-
-    // The checksum for the mesh
-    unsigned long CheckSum;
-
-    // The extents of the bounding box
-    Vector3i BoundingBox[2];
-
-    // The number of voxels
-    unsigned long Count;
-
-    MeshInfo();
-    ~MeshInfo();
-  };
-
-  // Collection of mesh data for labels present in the image
-  typedef std::map<LabelType, MeshInfo> MeshInfoMap;
   MeshInfoMap m_MeshInfo;
 
   // Set of bounding boxes
@@ -180,7 +187,7 @@ private:
   void UpdateMeshInfoHelper(
       MeshInfo *current_meshinfo,
       const itk::Index<3> &run_start,
-      itk::ImageLinearConstIteratorWithIndex<InputImageType> &it,
+      itk::ImageRegionConstIteratorWithIndex<InputImageType> &it,
       unsigned long pos);
 };
 

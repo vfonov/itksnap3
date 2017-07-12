@@ -4,8 +4,10 @@
 #include "GlobalUIModel.h"
 #include "IRISApplication.h"
 #include "GenericImageData.h"
+#include "ImageWrapperTraits.h"
+#include "SegmentationUpdateIterator.h"
 
-#include "itkRegionOfInterestImageFilter.h"
+#include "RLERegionOfInterestImageFilter.h"
 #include "itkGradientAnisotropicDiffusionImageFilter.h"
 #include "itkGradientMagnitudeImageFilter.h"
 #include "itkWatershedImageFilter.h"
@@ -16,9 +18,9 @@ class BrushWatershedPipeline
 {
 public:
   typedef itk::Image<GreyType, 3> GreyImageType;
-  typedef itk::Image<LabelType, 3> LabelImageType;
+  typedef LabelImageWrapperTraits::ImageType LabelImageType;
   typedef itk::Image<float, 3> FloatImageType;
-  typedef itk::Image<unsigned long, 3> WatershedImageType;
+  typedef itk::Image<itk::IdentifierType, 3> WatershedImageType;
   typedef WatershedImageType::IndexType IndexType;
 
   BrushWatershedPipeline()
@@ -83,49 +85,6 @@ public:
     return wctr == widx;
     }
 
-  bool UpdateLabelImage(
-    LabelImageType *ltrg,
-    CoverageModeType mode,
-    LabelType drawing_color,
-    LabelType overwrt_color)
-    {
-    // Get the watershed ID at the center voxel
-    unsigned long wid = wf->GetOutput()->GetPixel(vcenter);
-
-    // Keep track of changed voxels
-    bool flagChanged = false;
-
-    // Do the update
-    typedef itk::ImageRegionConstIterator<WatershedImageType> WIter;
-    typedef itk::ImageRegionIterator<LabelImageType> LIter;
-    WIter wit(wf->GetOutput(), wf->GetOutput()->GetBufferedRegion());
-    LIter sit(lsrc, lsrc->GetBufferedRegion());
-    LIter tit(ltrg, region);
-    for(; !wit.IsAtEnd(); ++sit,++tit,++wit)
-      {
-      LabelType pxLabel = sit.Get();
-      if(wit.Get() == wid)
-        {
-        // Standard paint mode
-        if (mode == PAINT_OVER_ALL ||
-          (mode == PAINT_OVER_ONE && pxLabel == overwrt_color) ||
-          (mode == PAINT_OVER_VISIBLE && pxLabel != 0))
-          {
-          pxLabel = drawing_color;
-          }
-        }
-      if(pxLabel != tit.Get())
-        {
-        tit.Set(pxLabel);
-        flagChanged = true;
-        }
-      }
-
-    if(flagChanged)
-      ltrg->Modified();
-    return flagChanged;
-    }
-
 private:
   typedef itk::RegionOfInterestImageFilter<GreyImageType, FloatImageType> ROIType;
   typedef itk::RegionOfInterestImageFilter<LabelImageType, LabelImageType> LROIType;
@@ -161,13 +120,13 @@ PaintbrushModel::~PaintbrushModel()
   delete m_Watershed;
 }
 
-Vector3f PaintbrushModel::ComputeOffset()
+Vector3d PaintbrushModel::ComputeOffset()
 {
   // Get the paintbrush properties
   PaintbrushSettings pbs =
       m_Parent->GetDriver()->GetGlobalState()->GetPaintbrushSettings();
 
-  Vector3f offset(0.0);
+  Vector3d offset(0.0);
   if(fmod(pbs.radius,1.0)==0)
     {
     offset.fill(0.5);
@@ -177,7 +136,7 @@ Vector3f PaintbrushModel::ComputeOffset()
   return offset;
 }
 
-void PaintbrushModel::ComputeMousePosition(const Vector3f &xSlice)
+void PaintbrushModel::ComputeMousePosition(const Vector3d &xSlice)
 {
   // Only when an image is loaded
   if(!m_Parent->GetDriver()->IsMainImageLoaded())
@@ -188,7 +147,7 @@ void PaintbrushModel::ComputeMousePosition(const Vector3f &xSlice)
       m_Parent->GetDriver()->GetGlobalState()->GetPaintbrushSettings();
 
   // Compute the new cross-hairs position in image space
-  Vector3f xCross = m_Parent->MapSliceToImage(xSlice);
+  Vector3d xCross = m_Parent->MapSliceToImage(xSlice);
 
   // Round the cross-hairs position down to integer
   Vector3i xCrossInteger = to_int(xCross + ComputeOffset());
@@ -223,7 +182,7 @@ bool PaintbrushModel::TestInside(const Vector3d &x, const PaintbrushSettings &ps
   Vector3d xTest = x;
   if(ps.isotropic)
     {
-    const Vector3f &spacing = m_Parent->GetSliceSpacing();
+    const Vector3d &spacing = m_Parent->GetSliceSpacing();
     double xMinVoxelDim = spacing.min_value();
     xTest(0) *= spacing(0) / xMinVoxelDim;
     xTest(1) *= spacing(1) / xMinVoxelDim;
@@ -243,7 +202,7 @@ bool PaintbrushModel::TestInside(const Vector3d &x, const PaintbrushSettings &ps
 
 bool
 PaintbrushModel
-::ProcessPushEvent(const Vector3f &xSlice, const Vector2ui &gridCell, bool reverse_mode)
+::ProcessPushEvent(const Vector3d &xSlice, const Vector2ui &gridCell, bool reverse_mode)
 {
   // Get the paintbrush properties (TODO: should we own them?)
   PaintbrushSettings pbs =
@@ -282,7 +241,7 @@ PaintbrushModel
 
 bool
 PaintbrushModel
-::ProcessDragEvent(const Vector3f &xSlice, const Vector3f &xSliceLast,
+::ProcessDragEvent(const Vector3d &xSlice, const Vector3d &xSliceLast,
                    double pixelsMoved, bool release)
 {
   IRISApplication *driver = m_Parent->GetDriver();
@@ -303,8 +262,8 @@ PaintbrushModel
         size_t nSteps = (int) ceil(pixelsMoved / pbs.radius);
         for(size_t i = 0; i < nSteps; i++)
           {
-          float t = (1.0 + i) / nSteps;
-          Vector3f X = t * m_LastApplyX + (1.0f - t) * xSlice;
+          double t = (1.0 + i) / nSteps;
+          Vector3d X = t * m_LastApplyX + (1.0 - t) * xSlice;
           ComputeMousePosition(X);
           ApplyBrush(m_ReverseMode, true);
           }
@@ -325,7 +284,8 @@ PaintbrushModel
     // If the mouse is being released, we need to commit the drawing
     if(release)
       {
-      driver->StoreUndoPoint("Drawing with paintbrush");
+      driver->GetCurrentImageData()->StoreUndoPoint("Drawing with paintbrush");
+      driver->RecordCurrentLabelUse();
 
       // TODO: this is ugly. The code for applying a brush should really be
       // placed in the IRISApplication.
@@ -343,7 +303,7 @@ PaintbrushModel
     return 0;
 }
 
-bool PaintbrushModel::ProcessMouseMoveEvent(const Vector3f &xSlice)
+bool PaintbrushModel::ProcessMouseMoveEvent(const Vector3d &xSlice)
 {
   ComputeMousePosition(xSlice);
   return true;
@@ -366,7 +326,8 @@ void PaintbrushModel::AcceptAtCursor()
   ApplyBrush(false, false);
 
   // We need to commit the drawing
-  driver->StoreUndoPoint("Drawing with paintbrush");
+  driver->GetCurrentImageData()->StoreUndoPoint("Drawing with paintbrush");
+  driver->RecordCurrentLabelUse();
 
   // TODO: this is ugly. The code for applying a brush should really be
   // placed in the IRISApplication.
@@ -379,6 +340,7 @@ PaintbrushModel::ApplyBrush(bool reverse_mode, bool dragging)
   // Get the global objects
   IRISApplication *driver = m_Parent->GetDriver();
   GlobalState *gs = driver->GetGlobalState();
+  GenericImageData *gid = driver->GetCurrentImageData();
 
   // Get the segmentation image
   LabelImageWrapper *imgLabel = driver->GetCurrentImageData()->GetSegmentation();
@@ -417,13 +379,9 @@ PaintbrushModel::ApplyBrush(bool reverse_mode, bool dragging)
   // Crop the region by the buffered region
   xTestRegion.Crop(imgLabel->GetImage()->GetBufferedRegion());
 
-  // Flag to see if anything was changed
-  bool flagUpdate = false;
-
   // Special code for Watershed brush
   if(flagWatershed)
     {
-    GenericImageData *gid = driver->GetCurrentImageData();
 
     // Get the currently engaged layer
     ImageWrapperBase *context_layer = gid->FindLayer(m_ContextLayerId, false);
@@ -440,21 +398,23 @@ PaintbrushModel::ApplyBrush(bool reverse_mode, bool dragging)
     }
 
   // Shift vector (different depending on whether the brush has odd/even diameter
-  Vector3f offset = ComputeOffset();
+  Vector3d offset = ComputeOffset();
 
-  // Iterate over the region
-  LabelImageWrapper::Iterator it(imgLabel->GetImage(), xTestRegion);
-  for(; !it.IsAtEnd(); ++it)
+  // Iterate over the region using
+  SegmentationUpdateIterator it_update(
+        imgLabel->GetImage(), xTestRegion, drawing_color, drawover);
+
+  for(; !it_update.IsAtEnd(); ++it_update)
     {
-    // Check if we are inside the sphere
-    LabelImageWrapper::ImageType::IndexType idx = it.GetIndex();
-    Vector3f xDelta =
+    SegmentationUpdateIterator::IndexType idx = it_update.GetIndex();
+
+    Vector3d xDelta =
         offset
-        + to_float(Vector3l(idx.GetIndex()))
-        - to_float(m_MousePosition);
+        + to_double(Vector3l(idx.GetIndex()))
+        - to_double(m_MousePosition);
 
     Vector3d xDeltaSliceSpace = to_double(
-          m_Parent->GetImageToDisplayTransform().TransformVector(xDelta));
+          m_Parent->GetImageToDisplayTransform()->TransformVector(xDelta));
 
     // Check if the pixel is inside
     if(!TestInside(xDeltaSliceSpace, pbs))
@@ -470,52 +430,34 @@ PaintbrushModel::ApplyBrush(bool reverse_mode, bool dragging)
       }
 
     // Paint the pixel
-    LabelType pxLabel = it.Get();
-
-    // Standard paint mode
-    if(!reverse_mode)
-      {
-      if(drawover.CoverageMode == PAINT_OVER_ALL ||
-        (drawover.CoverageMode == PAINT_OVER_ONE && pxLabel == drawover.DrawOverLabel) ||
-        (drawover.CoverageMode == PAINT_OVER_VISIBLE && pxLabel != 0))
-        {
-        it.Set(drawing_color);
-        if(pxLabel != drawing_color) flagUpdate = true;
-        }
-      }
-    // Background paint mode (clear label over current label)
+    if(reverse_mode)
+      it_update.PaintAsBackground();
     else
-      {
-      if(drawing_color != 0 && pxLabel == drawing_color)
-        {
-        it.Set(0);
-        if(pxLabel != 0) flagUpdate = true;
-        }
-      else if(drawing_color == 0 && drawover.CoverageMode == PAINT_OVER_ONE)
-        {
-        it.Set(drawover.DrawOverLabel);
-        if(pxLabel != drawover.DrawOverLabel) flagUpdate = true;
-        }
-      }
+      it_update.PaintAsForeground();
     }
 
-  // Image has been updated
-  if(flagUpdate)
-    {
-    imgLabel->GetImage()->Modified();
-    }
+  // Finalize the iteration
+  it_update.Finalize();
 
-  return flagUpdate;
+  // If nothing actually changed, return
+  if(it_update.GetNumberOfChangedVoxels() == 0)
+    return false;
+
+  // Send the delta for undo
+  gid->StoreIntermediateUndoDelta(it_update.RelinquishDelta());
+
+  // Changes were made
+  return true;
 }
 
 
-Vector3f PaintbrushModel::GetCenterOfPaintbrushInSliceSpace()
+Vector3d PaintbrushModel::GetCenterOfPaintbrushInSliceSpace()
 {
   PaintbrushSettings pbs =
       m_Parent->GetDriver()->GetGlobalState()->GetPaintbrushSettings();
 
   if(fmod(pbs.radius, 1.0) == 0)
-    return m_Parent->MapImageToSlice(to_float(m_MousePosition));
+    return m_Parent->MapImageToSlice(to_double(m_MousePosition));
   else
-    return m_Parent->MapImageToSlice(to_float(m_MousePosition) + Vector3f(0.5f));
+    return m_Parent->MapImageToSlice(to_double(m_MousePosition) + Vector3d(0.5));
 }

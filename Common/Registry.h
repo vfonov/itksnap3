@@ -335,6 +335,12 @@ public:
   /** Constructor loads a registry from a file */
   Registry(const char *fname);
 
+  /** Copy constructor - copy entire registry by value */
+  Registry(const Registry &source);
+
+  /** Assignment operator - copy entire registry by value */
+  void operator = (const Registry &source);
+
   /** Destructor */
   virtual ~Registry();
 
@@ -372,6 +378,9 @@ public:
 
   /** Empty the contents of the registry */
   void Clear();
+
+  /** Check if the folder is empty */
+  bool IsEmpty() const;
 
   /** Get a list of all keys that have values contained in this registry
    * and all subfolders (recursive operation).  Prefix is used internally,
@@ -447,6 +456,15 @@ public:
     return result;
   }
 
+  /** Test if the folder contains just an empty array */
+  bool IsZeroSizeArray();
+
+  /** Remove all empty folders recursively (folders with no elements) */
+  void CleanEmptyFolders();
+
+  /** Remove all folders that are zero-length arrays */
+  void CleanZeroSizeArrays();
+
   /** An IO exception objects thrown by this class when reading from file*/
   class IOException : public StringType {
   public:
@@ -460,6 +478,7 @@ public:
   };
 
 private:
+
   // Hashtable type definition
   typedef std::map<StringType, Registry *> FolderMapType;
   typedef std::map<StringType, RegistryValue> EntryMapType;

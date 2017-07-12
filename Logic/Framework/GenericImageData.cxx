@@ -35,7 +35,7 @@
 // ITK Includes
 #include "itkImage.h"
 #include "itkImageIterator.h"
-#include "itkImageRegionIterator.h"
+#include "RLEImageRegionIterator.h"
 #include "itkImageRegionConstIterator.h"
 #include "itkImageRegionIteratorWithIndex.h"
 #include "itkMinimumMaximumImageCalculator.h"
@@ -91,6 +91,11 @@ GenericImageData
 
   // Create empty annotations
   m_Annotations = ImageAnnotationData::New();
+
+  // Initialize the display viewport geometry objects
+  m_DisplayViewportGeometry[0] = ImageBaseType::New();
+  m_DisplayViewportGeometry[1] = ImageBaseType::New();
+  m_DisplayViewportGeometry[2] = ImageBaseType::New();
 }
 
 GenericImageData
@@ -137,21 +142,13 @@ GenericImageData
 #include "itkIdentityTransform.h"
 
 SmartPtr<ImageWrapperBase>
-GenericImageData::CreateAnatomicWrapper(GuidedNativeImageIO *io, bool sameSpaceAsMainWrapper)
+GenericImageData::CreateAnatomicWrapper(GuidedNativeImageIO *io, ITKTransformType *transform)
 {
   // The output wrapper
   SmartPtr<ImageWrapperBase> out_wrapper;
 
-  // Determine the reference image and transform
-  ImageBaseType *refSpace = NULL;
-  typedef itk::IdentityTransform<double, 3> TransformType;
-  SmartPtr<TransformType> transform = NULL;
-
-  if(!sameSpaceAsMainWrapper)
-    {
-    refSpace = this->GetMain()->GetImageBase();
-    transform = TransformType::New();
-    }
+  // If the transform is not NULL, the reference space must be specified
+  ImageBaseType *refSpace = (transform) ? this->GetMain()->GetImageBase() : NULL;
 
   // Split depending on whether the image is scalar or vector
   if(io->GetNumberOfComponentsInNativeImage() > 1)
@@ -174,6 +171,9 @@ GenericImageData::CreateAnatomicWrapper(GuidedNativeImageIO *io, bool sameSpaceA
     wrapper->SetDisplayGeometry(m_DisplayGeometry);
     wrapper->SetImage(image, refSpace, transform);
     wrapper->SetNativeMapping(mapper);
+    for(int i = 0; i < 3; i++)
+      wrapper->SetDisplayViewportGeometry(i, m_DisplayViewportGeometry[i]);
+
     out_wrapper = wrapper.GetPointer();
     }
 
@@ -197,6 +197,10 @@ GenericImageData::CreateAnatomicWrapper(GuidedNativeImageIO *io, bool sameSpaceA
     wrapper->SetDisplayGeometry(m_DisplayGeometry);
     wrapper->SetImage(image, refSpace, transform);
     wrapper->SetNativeMapping(mapper);
+
+    for(int i = 0; i < 3; i++)
+      wrapper->SetDisplayViewportGeometry(i, m_DisplayViewportGeometry[i]);
+
     out_wrapper = wrapper.GetPointer();
     }
 
@@ -208,7 +212,7 @@ void GenericImageData::SetMainImage(GuidedNativeImageIO *io)
 {
   // Create the wrapper from the Native IO (the wrapper will either be a scalar
   // or a vector-valued image, depending on the number of components)
-  SmartPtr<ImageWrapperBase> wrapper = this->CreateAnatomicWrapper(io, true);
+  SmartPtr<ImageWrapperBase> wrapper = this->CreateAnatomicWrapper(io, NULL);
 
   // Assign this wrapper to the main image
   this->SetMainImageInternal(wrapper);
@@ -228,7 +232,6 @@ GenericImageData
 
   // Reset the undo manager
   m_UndoManager.Clear();
-  m_UndoManager.SetCumulativeDelta(NULL);
 }
 
 void
@@ -256,7 +259,7 @@ GenericImageData
 {
   // Create the wrapper from the Native IO (the wrapper will either be a scalar
   // or a vector-valued image, depending on the number of components)
-  SmartPtr<ImageWrapperBase> wrapper = this->CreateAnatomicWrapper(io, true);
+  SmartPtr<ImageWrapperBase> wrapper = this->CreateAnatomicWrapper(io, NULL);
 
   // Assign this wrapper to the main image
   this->AddOverlayInternal(wrapper);
@@ -264,11 +267,11 @@ GenericImageData
 
 void
 GenericImageData
-::AddCoregOverlay(GuidedNativeImageIO *io)
+::AddCoregOverlay(GuidedNativeImageIO *io, ITKTransformType *transform)
 {
   // Create the wrapper from the Native IO (the wrapper will either be a scalar
   // or a vector-valued image, depending on the number of components)
-  SmartPtr<ImageWrapperBase> wrapper = this->CreateAnatomicWrapper(io, false);
+  SmartPtr<ImageWrapperBase> wrapper = this->CreateAnatomicWrapper(io, transform);
 
   // Assign this wrapper to the main image
   this->AddOverlayInternal(wrapper, false);
@@ -346,7 +349,6 @@ GenericImageData
 
   // Reset the undo manager
   m_UndoManager.Clear();
-  m_UndoManager.SetCumulativeDelta(this->CompressLabelImage());
 }
 
 GenericImageData::UndoManagerType::Delta *
@@ -355,10 +357,12 @@ GenericImageData
 {
   UndoManagerType::Delta *new_cumulative = new UndoManagerType::Delta();
   LabelImageType *seg = this->GetSegmentation()->GetImage();
-  LabelType *buffer = seg->GetBufferPointer();
-  LabelType *buffer_end = buffer + seg->GetPixelContainer()->Size();
-  while (buffer < buffer_end)
-    new_cumulative->Encode(*buffer++);
+
+  itk::ImageRegionConstIterator<LabelImageType> it(seg, seg->GetLargestPossibleRegion());
+  for (; !it.IsAtEnd(); ++it)
+    {
+    new_cumulative->Encode(it.Get());
+    }
 
   new_cumulative->FinishEncoding();
   return new_cumulative;
@@ -390,13 +394,17 @@ GenericImageData
 
 void GenericImageData::SetDisplayGeometry(const IRISDisplayGeometry &dispGeom)
 {
-  m_DisplayGeometry = dispGeom;
   for(LayerIterator lit(this); !lit.IsAtEnd(); ++lit)
     if(lit.GetLayer())
       {
       // Set the direction matrix in the image
-      lit.GetLayer()->SetDisplayGeometry(m_DisplayGeometry);
+      lit.GetLayer()->SetDisplayGeometry(m_Parent->GetDisplayGeometry());
       }
+}
+
+GenericImageData::ImageBaseType *GenericImageData::GetDisplayViewportGeometry(int index)
+{
+  return m_DisplayViewportGeometry[index];
 }
 
 void GenericImageData::SetDirectionMatrix(const vnl_matrix<double> &direction)
@@ -415,65 +423,19 @@ const ImageCoordinateGeometry &GenericImageData::GetImageGeometry() const
   return m_MainImageWrapper->GetImageGeometry();
 }
 
-GenericImageData::UndoManagerType::Delta *
-GenericImageData::GetCumulativeUndoDelta()
+void GenericImageData::StoreIntermediateUndoDelta(UndoManagerDelta *delta)
 {
-  return m_UndoManager.GetCumulativeDelta();
+  m_UndoManager.AddDeltaToStaging(delta);
 }
 
-void GenericImageData::StoreUndoPoint(const char *text)
+void GenericImageData::StoreUndoPoint(const char *text, UndoManagerDelta *delta)
 {
-  // Set the current state as the undo point. We store the difference between
-  // the last 'undo' image and the current segmentation image, and then copy
-  // the current segmentation image into the undo image
-  LabelImageWrapper *seg = this->GetSegmentation();
-  UndoManagerType::Delta *new_cumulative = new UndoManagerType::Delta();
+  // If there is a delta, add it to staging
+  if(delta)
+    m_UndoManager.AddDeltaToStaging(delta);
 
-  LabelType *dseg = seg->GetVoxelPointer();
-  size_t n = seg->GetNumberOfVoxels();
-
-  // Create the Undo delta object
-  UndoManagerType::Delta *delta = new UndoManagerType::Delta();
-
-  // Get the old cumulative delta
-  UndoManagerType::Delta *old_cumulative = m_UndoManager.GetCumulativeDelta();
-
-  // Run over the old cumulative data
-  if(old_cumulative)
-    {
-    for(size_t i = 0; i < old_cumulative->GetNumberOfRLEs(); i++)
-      {
-      size_t rle_len = old_cumulative->GetRLELength(i);
-      LabelType rle_val = old_cumulative->GetRLEValue(i);
-
-      for(size_t j = 0; j < rle_len; j++)
-        {
-        delta->Encode(*dseg - rle_val);
-        new_cumulative->Encode(*dseg);
-        dseg++;
-        }
-      }
-
-    // Important last step!
-    delta->FinishEncoding();
-    new_cumulative->FinishEncoding();
-    }
-  else
-    {
-    LabelType *dseg_end = dseg + n;
-    for(; dseg < dseg_end; ++dseg)
-      {
-      // TODO: add code to duplicate
-      delta->Encode(*dseg);
-      }
-
-    delta->FinishEncoding();
-    *new_cumulative = *delta;
-    }
-
-  // Add the delta object
-  m_UndoManager.AppendDelta(delta);
-  m_UndoManager.SetCumulativeDelta(new_cumulative);
+  // Commit the deltas
+  m_UndoManager.CommitStaging(text);
 }
 
 void GenericImageData::ClearUndoPoints()
@@ -492,43 +454,39 @@ void
 GenericImageData
 ::Undo()
 {
-  // In order to undo, we must take the 'current' delta and apply
-  // it to the image
-  UndoManagerType::Delta *delta = m_UndoManager.GetDeltaForUndo();
-  UndoManagerType::Delta *cumulative = new UndoManagerType::Delta();
+  // Get the commit for the undo
+  const UndoManagerType::Commit &commit = m_UndoManager.GetCommitForUndo();
 
-  LabelImageWrapper *imSeg = this->GetSegmentation();
-  LabelType *dseg = imSeg->GetVoxelPointer();
+  // The label image that will undergo undo
+  typedef itk::ImageRegionIterator<LabelImageType> IteratorType;
+  LabelImageType *imSeg = this->GetSegmentation()->GetImage();
 
-  // Applying the delta means adding
-  for(size_t i = 0; i < delta->GetNumberOfRLEs(); i++)
+  // Iterate over all the deltas in reverse order
+  UndoManagerType::DList::const_reverse_iterator dit = commit.GetDeltas().rbegin();
+  for(; dit != commit.GetDeltas().rend(); ++dit)
     {
-    size_t n = delta->GetRLELength(i);
-    LabelType d = delta->GetRLEValue(i);
-    if(d == 0)
+    // Apply the changes in the current delta
+    UndoManagerType::Delta *delta = *dit;
+
+    // Iterator for the relevant region in the label image
+    IteratorType lit(imSeg, delta->GetRegion());
+
+    // Iterate over the rles in the delta
+    for(size_t i = 0; i < delta->GetNumberOfRLEs(); i++)
       {
+      size_t n = delta->GetRLELength(i);
+      LabelType d = delta->GetRLEValue(i);
       for(size_t j = 0; j < n; j++)
         {
-        cumulative->Encode(*dseg);
-        ++dseg;
-        }
-      }
-    else
-      {
-      for(size_t j = 0; j < n; j++)
-        {
-        *dseg -= d;
-        cumulative->Encode(*dseg);
-        ++dseg;
+        if(d != 0)
+          lit.Set(lit.Get() - d);
+        ++lit;
         }
       }
     }
 
-  cumulative->FinishEncoding();
-  m_UndoManager.SetCumulativeDelta(cumulative);
-
   // Set modified flags
-  imSeg->GetImage()->Modified();
+  imSeg->Modified();
   InvokeEvent(SegmentationChangeEvent());
 }
 
@@ -543,47 +501,41 @@ void
 GenericImageData
 ::Redo()
 {
-  // In order to undo, we must take the 'current' delta and apply
-  // it to the image
-  UndoManagerType::Delta *delta = m_UndoManager.GetDeltaForRedo();
-  LabelImageWrapper *imSeg = this->GetSegmentation();
-  LabelType *dseg = imSeg->GetVoxelPointer();
+  // Get the commit for the redo
+  const UndoManagerType::Commit &commit = m_UndoManager.GetCommitForRedo();
 
-  UndoManagerType::Delta *cumulative = new UndoManagerType::Delta();
+  // The label image that will undergo redo
+  typedef itk::ImageRegionIterator<LabelImageType> IteratorType;
+  LabelImageType *imSeg = this->GetSegmentation()->GetImage();
 
-  // Applying the delta means adding
-  for(size_t i = 0; i < delta->GetNumberOfRLEs(); i++)
+  // Iterate over all the deltas in reverse order
+  UndoManagerType::DList::const_iterator dit = commit.GetDeltas().begin();
+  for(; dit != commit.GetDeltas().end(); ++dit)
     {
-    size_t n = delta->GetRLELength(i);
-    LabelType d = delta->GetRLEValue(i);
-    if(d == 0)
+    // Apply the changes in the current delta
+    UndoManagerType::Delta *delta = *dit;
+
+    // Iterator for the relevant region in the label image
+    IteratorType lit(imSeg, delta->GetRegion());
+
+    // Iterate over the rles in the delta
+    for(size_t i = 0; i < delta->GetNumberOfRLEs(); i++)
       {
+      size_t n = delta->GetRLELength(i);
+      LabelType d = delta->GetRLEValue(i);
       for(size_t j = 0; j < n; j++)
         {
-        cumulative->Encode(*dseg);
-        ++dseg;
-        }
-      }
-    else
-      {
-      for(size_t j = 0; j < n; j++)
-        {
-        *dseg += d;
-        cumulative->Encode(*dseg);
-        ++dseg;
+        if(d != 0)
+          lit.Set(lit.Get() + d);
+        ++lit;
         }
       }
     }
 
-  cumulative->FinishEncoding();
-  m_UndoManager.SetCumulativeDelta(cumulative);
-
   // Set modified flags
-  imSeg->GetImage()->Modified();
+  imSeg->Modified();
   InvokeEvent(SegmentationChangeEvent());
 }
-
-
 
 GenericImageData::RegionType
 GenericImageData
@@ -646,9 +598,8 @@ int GenericImageData::GetNumberOfOverlays()
 
 ImageWrapperBase *GenericImageData::GetLastOverlay()
 {
-  return m_Wrappers[OVERLAY_ROLE].back();
+    return m_Wrappers[OVERLAY_ROLE].back();
 }
-
 
 
 void GenericImageData::PushBackImageWrapper(LayerRole role,

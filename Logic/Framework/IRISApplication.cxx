@@ -48,11 +48,9 @@
 #include "MeshManager.h"
 #include "MeshExportSettings.h"
 #include "SegmentationStatistics.h"
-#include "itkImageRegionIterator.h"
-#include "itkImageRegionConstIterator.h"
-#include "itkImageRegionIteratorWithIndex.h"
+#include "RLEImageRegionIterator.h"
+#include "RLERegionOfInterestImageFilter.h"
 #include "itkPasteImageFilter.h"
-#include "itkImageRegionIterator.h"
 #include "itkIdentityTransform.h"
 #include "itkResampleImageFilter.h"
 #include "itkNearestNeighborInterpolateImageFunction.h"
@@ -86,7 +84,7 @@
 #include "RandomForestClassifyImageFilter.h"
 #include "LabelUseHistory.h"
 #include "ImageAnnotationData.h"
-
+#include "SegmentationUpdateIterator.h"
 
 
 #include <stdio.h>
@@ -195,7 +193,7 @@ IRISApplication
   // Override the interpolator in ROI for label interpolation, or we will get
   // nonsense
   SNAPSegmentationROISettings roiLabel = roi;
-  roiLabel.SetInterpolationMethod(SNAPSegmentationROISettings::NEAREST_NEIGHBOR);
+  roiLabel.SetInterpolationMethod(NEAREST_NEIGHBOR);
 
   // Get chunk of the label image
   LabelImageType::Pointer imgNewLabel = 
@@ -210,8 +208,8 @@ IRISApplication
   unsigned int nCopied = 0;
   while(!itLabel.IsAtEnd())
     {
-    if(itLabel.Value() != passThroughLabel || !roi.IsSeedWithCurrentSegmentation())
-      itLabel.Value() = (LabelType) 0;
+    if(itLabel.Get() != passThroughLabel || !roi.IsSeedWithCurrentSegmentation())
+      itLabel.Set((LabelType) 0);
     else
       nCopied++;
     ++itLabel;
@@ -385,9 +383,20 @@ IRISApplication
   // This has to happen in 'pure' SNAP mode
   assert(IsSnakeModeActive());
 
-  // Cast the image to label type
-  CastNativeImage<LabelImageType> caster;
-  LabelImageType::Pointer imgLabel = caster(io);
+  typedef itk::Image<LabelType, 3> UncompressedImageType;
+
+  // Cast the native to label type
+  CastNativeImage<UncompressedImageType> caster;
+  UncompressedImageType::Pointer imgUncompressed = caster(io);
+
+  //use specialized RoI filter to convert to RLEImage
+  typedef itk::RegionOfInterestImageFilter<UncompressedImageType, LabelImageType> inConverterType;
+  inConverterType::Pointer inConv = inConverterType::New();
+  inConv->SetInput(imgUncompressed);
+  inConv->SetRegionOfInterest(imgUncompressed->GetLargestPossibleRegion());
+  inConv->Update();
+  LabelImageType::Pointer imgLabel = inConv->GetOutput();
+  imgUncompressed = NULL; //deallocate intermediate image to save memory
 
   // The header of the label image is made to match that of the grey image
   imgLabel->SetOrigin(m_CurrentImageData->GetMain()->GetImageBase()->GetOrigin());
@@ -400,12 +409,13 @@ IRISApplication
   // Update filenames
   m_CurrentImageData->GetSegmentation()->SetFileName(io->GetFileNameOfNativeImage());
 
+  // TODO: this is inefficient with the new representation
   // Set the loaded labels as valid
   LabelImageType *seg = m_CurrentImageData->GetSegmentation()->GetImage();
-  LabelType *buffer = seg->GetBufferPointer();
-  LabelType *buffer_end = buffer + seg->GetPixelContainer()->Size();
-  while (buffer < buffer_end)
-    m_ColorLabelTable->SetColorLabelValid(*buffer++, true);
+  typedef itk::ImageRegionConstIterator<LabelImageType> IteratorType;
+  IteratorType it(seg, seg->GetBufferedRegion());
+  for(; !it.IsAtEnd(); ++it)
+    m_ColorLabelTable->SetColorLabelValid(it.Get(), true);
 
   // Let the GUI know that segmentation changed
   InvokeEvent(SegmentationChangeEvent());
@@ -418,9 +428,23 @@ IRISApplication
   // This has to happen in 'pure' IRIS mode
   assert(!IsSnakeModeActive());
 
-  // Cast the image to label type
-  CastNativeImage<LabelImageType> caster;
-  LabelImageType::Pointer imgLabel = caster(io);
+  typedef itk::Image<LabelType, 3> UncompressedImageType;
+
+  // Cast the native to label type
+  CastNativeImage<UncompressedImageType> caster;
+  UncompressedImageType::Pointer imgUncompressed = caster(io);
+
+  //use specialized RoI filter to convert to RLEImage
+  typedef itk::RegionOfInterestImageFilter<UncompressedImageType, LabelImageType> inConverterType;
+  inConverterType::Pointer inConv = inConverterType::New();
+  inConv->SetInput(imgUncompressed);
+  inConv->SetRegionOfInterest(imgUncompressed->GetLargestPossibleRegion());
+  inConv->Update();
+  LabelImageType::Pointer imgLabel = inConv->GetOutput();
+  imgUncompressed = NULL; //deallocate intermediate image to save memory
+
+  // Disconnect from the pipeline right away
+  imgLabel->DisconnectPipeline();
   
   // The header of the label image is made to match that of the grey image
   imgLabel->SetOrigin(m_CurrentImageData->GetMain()->GetImageBase()->GetOrigin());
@@ -437,15 +461,26 @@ IRISApplication
   m_SystemInterface->GetHistoryManager()->UpdateHistory(
         "LabelImage", io->GetFileNameOfNativeImage(), true);
 
-  // Now we can use the RLE encoding of the segmentation to quickly determine
-  // which labels are valid
-  // TODO: this will become unnecessary when we move to compressed segmentations!
-  GenericImageData::UndoManagerType::Delta *new_cumulative =
-      m_IRISImageData->GetCumulativeUndoDelta();
-  for(size_t j = 0; j < new_cumulative->GetNumberOfRLEs(); j++)
+  // Iterate over the RLEs in the label image
+  LabelType last_label = 0;
+  typedef itk::ImageRegionConstIterator<LabelImageType::BufferType> RLLineIter;
+  RLLineIter rlit(m_IRISImageData->GetSegmentation()->GetImage()->GetBuffer(),
+                  m_IRISImageData->GetSegmentation()->GetImage()->GetBuffer()->GetBufferedRegion());
+  for(; !rlit.IsAtEnd(); ++rlit)
     {
-    LabelType label = new_cumulative->GetRLEValue(j);
-    m_ColorLabelTable->SetColorLabelValid(label, true);
+    // Get the line
+    const LabelImageType::RLLine &line = rlit.Value();
+
+    // Iterate over the entries
+    for(int i = 0; i < line.size(); i++)
+      {
+      LabelType label = line[i].second;
+      if(label != last_label)
+        {
+        m_ColorLabelTable->SetColorLabelValid(label, true);
+        last_label = label;
+        }
+      }
     }
 
   // Let the GUI know that segmentation changed
@@ -475,101 +510,104 @@ IRISApplication
   return iTarget;
 }
 
-void IRISApplication::BeginSegmentationUpdate(std::string undo_name)
-{
-  m_SegmentationUpdateName = undo_name;
-  m_SegmentationChangeCount = 0;
-}
-
-void IRISApplication::UpdateSegmentationVoxel(const Vector3ui &pos)
-{
-  // Get the segmentation image
-  LabelImageType *seg = m_CurrentImageData->GetSegmentation()->GetImage();
-  LabelType &label = seg->GetPixel(to_itkIndex(pos));
-  LabelType newlabel = DrawOverLabel(label);
-  if(label != newlabel)
-    {
-    label = newlabel;
-    m_SegmentationChangeCount++;
-    }
-}
-
-int IRISApplication::EndSegmentationUpdate()
-{
-  if(m_SegmentationChangeCount > 0)
-    {
-    m_CurrentImageData->GetSegmentation()->GetImage()->Modified();
-    this->StoreUndoPoint(m_SegmentationUpdateName.c_str());
-    this->InvokeEvent(SegmentationChangeEvent());
-    }
-
-  m_SegmentationUpdateName = std::string();
-  return m_SegmentationChangeCount;
-}
-
 unsigned int
 IRISApplication
 ::UpdateSegmentationWithSliceDrawing(
     IRISApplication::SliceBinaryImageType *drawing,
-    const ImageCoordinateTransform &xfmSliceToImage,
+    const ImageCoordinateTransform *xfmSliceToImage,
     double zSlice,
     const std::string &undoTitle)
 {
   // Get the segmentation image
   LabelImageType *seg = m_CurrentImageData->GetSegmentation()->GetImage();
 
-  // Drawing parameters
-  CoverageModeType iMode = m_GlobalState->GetDrawOverFilter().CoverageMode;
-  LabelType iDrawing = m_GlobalState->GetDrawingColorLabel();
-  LabelType iDrawOver = m_GlobalState->GetDrawOverFilter().DrawOverLabel;
-  bool invert = m_GlobalState->GetPolygonInvert();
+  // Turn the 2D region of the drawing into a 3D region in the segmentation
+  IRISApplication::SliceBinaryImageType::RegionType r_draw = drawing->GetBufferedRegion();
 
-  // Keep track of the number of pixels changed
-  unsigned int nUpdates = 0;
+  // Array of corners of the drawing region
+  Vector2ui corners[4];
+  corners[0][0] = r_draw.GetIndex()[0];
+  corners[0][1] = r_draw.GetIndex()[1];
+  corners[1][0] = r_draw.GetUpperIndex()[0];
+  corners[1][1] = r_draw.GetIndex()[1];
+  corners[2][0] = r_draw.GetIndex()[0];
+  corners[2][1] = r_draw.GetUpperIndex()[1];
+  corners[3][0] = r_draw.GetUpperIndex()[0];
+  corners[3][1] = r_draw.GetUpperIndex()[1];
 
-  // Iterate through the drawing
-  for (itk::ImageRegionIteratorWithIndex<SliceBinaryImageType>
-       it(drawing, drawing->GetBufferedRegion()); !it.IsAtEnd(); ++it)
+  // Compute 3D extents of the region
+  Vector3ui pos_min, pos_max;
+  for(int i = 0; i < 4; i++)
     {
-    // Get the current polygon pixel
-    SliceBinaryImageType::PixelType px = it.Get();
+    // Get the 3D coordinate of the corner
+    Vector3ui idxVol = to_unsigned_int(
+                         xfmSliceToImage->TransformPoint(
+                           Vector3d(corners[i][0] + 0.5, corners[i][1] + 0.5, zSlice)));
 
-    // Check for non-zero alpha of the pixel
-    if((px != 0) ^ invert)
+    if(i == 0)
       {
-      // Figure out the coordinate of the target image
-      itk::Index<2> idx = it.GetIndex();
-      Vector3f idxImageFloat = xfmSliceToImage.TransformPoint(
-            Vector3f(idx[0] + 0.5, idx[1] + 0.5, zSlice));
-      itk::Index<3> iseg = to_itkIndex(to_unsigned_int(idxImageFloat));
-
-      // Access the voxel in the segmentation
-      LabelType &voxel = seg->GetPixel(iseg);
-
-      // Apply the label to the voxel
-      if(iMode == PAINT_OVER_ALL ||
-         (iMode == PAINT_OVER_ONE && voxel == iDrawOver) ||
-         (iMode == PAINT_OVER_VISIBLE &&
-          m_ColorLabelTable->GetColorLabel(voxel).IsVisible()))
+      pos_min = idxVol;
+      pos_max = idxVol;
+      }
+    else
+      {
+      for(int j = 0; j < 3; j++)
         {
-        if(voxel != iDrawing)
-          {
-          voxel = iDrawing;
-          nUpdates++;
-          }
+        if(pos_min[j] > idxVol[j]) pos_min[j] = idxVol[j];
+        if(pos_max[j] < idxVol[j]) pos_max[j] = idxVol[j];
         }
       }
     }
 
-  // Has anything been changed?
-  if(nUpdates > 0)
+  // Define the volumetric region
+  LabelImageType::RegionType r_vol;
+  r_vol.SetIndex(to_itkIndex(pos_min));
+  r_vol.SetUpperIndex(to_itkIndex(pos_max));
+  r_vol.Crop(seg->GetBufferedRegion());
+
+  // Create an iterator for painting
+  SegmentationUpdateIterator itVol(seg, r_vol,
+                                   m_GlobalState->GetDrawingColorLabel(),
+                                   m_GlobalState->GetDrawOverFilter());
+
+  // Drawing parameters
+  bool invert = m_GlobalState->GetPolygonInvert();
+
+  // Inverse transform
+  ImageCoordinateTransform::Pointer xfmImageToSlice = ImageCoordinateTransform::New();
+  xfmSliceToImage->ComputeInverse(xfmImageToSlice);
+
+  // Iterate over the volume region
+  for(; !itVol.IsAtEnd(); ++itVol)
     {
-    seg->Modified();
-    StoreUndoPoint(undoTitle.c_str());
+    // Find the coordinate of the voxel in the slice
+    itk::Index<3> idx_vol = itVol.GetIndex();
+    Vector3d x_slice = xfmImageToSlice->TransformPoint(
+                         Vector3d(idx_vol[0] + 0.5, idx_vol[1] + 0.5, idx_vol[2] + 0.5));
+    itk::Index<2> idx_slice;
+    idx_slice[0] = (int) x_slice[0];
+    idx_slice[1] = (int) x_slice[1];
+
+    // Check value
+    SliceBinaryImageType::PixelType px = drawing->GetPixel(idx_slice);
+    if((px != 0) ^ invert)
+      itVol.PaintAsForeground();
+
+
+    }
+
+  // Finalize
+  itVol.Finalize();
+
+  // Store update
+  if(itVol.GetNumberOfChangedVoxels() > 0)
+    {
+    m_CurrentImageData->StoreUndoPoint(undoTitle.c_str(), itVol.RelinquishDelta());
+    this->RecordCurrentLabelUse();
     InvokeEvent(SegmentationChangeEvent());
     }
 
-  return nUpdates;
+  return itVol.GetNumberOfChangedVoxels();
 }
 
 void 
@@ -620,19 +658,19 @@ IRISApplication
     // Choose the interpolator
     switch(roi.GetInterpolationMethod())
       {
-      case SNAPSegmentationROISettings::NEAREST_NEIGHBOR :
+      case NEAREST_NEIGHBOR :
         fltSample->SetInterpolator(NNInterpolatorType::New());
         break;
 
-      case SNAPSegmentationROISettings::TRILINEAR : 
+      case TRILINEAR :
         fltSample->SetInterpolator(LinearInterpolatorType::New());
         break;
 
-      case SNAPSegmentationROISettings::TRICUBIC :
+      case TRICUBIC :
         fltSample->SetInterpolator(CubicInterpolatorType::New());
         break;  
 
-      case SNAPSegmentationROISettings::SINC_WINDOW_05 :
+      case SINC_WINDOW_05 :
         fltSample->SetInterpolator(SincInterpolatorType::New());
         break;
       };
@@ -657,54 +695,42 @@ IRISApplication
     // Change the source to the output
     source = fltSample->GetOutput();
     }  
-  
-  // Create iterators for copying from one to the other
+
+  // Creat the source iterator
   typedef itk::ImageRegionConstIterator<SourceImageType> SourceIteratorType;
-  typedef itk::ImageRegionIterator<TargetImageType> TargetIteratorType;
   SourceIteratorType itSource(source,source->GetLargestPossibleRegion());
-  TargetIteratorType itTarget(target,roi.GetROI());
 
-  // Figure out which color draws and which color is clear
-  unsigned int iClear = m_GlobalState->GetPolygonInvert() ? 1 : 0;
+  // Create the smart target iterator
+  SegmentationUpdateIterator itTarget(
+        target, roi.GetROI(),
+        m_GlobalState->GetDrawingColorLabel(), m_GlobalState->GetDrawOverFilter());
 
-  // Construct a merge table that contains an output intensity for every 
-  // possible combination of two input intensities (note that snap image only
-  // has two possible intensities
-  LabelType mergeTable[2][MAX_COLOR_LABELS];
-
-  // Perform the merge
-  for(unsigned int i=0;i<MAX_COLOR_LABELS;i++)
-    {
-    // Whe the SNAP image is clear, IRIS passes through to the output
-    // except for the IRIS voxels of the drawing color, which get cleared out
-    mergeTable[iClear][i] = (i!=m_GlobalState->GetDrawingColorLabel()) ? i : 0;
-
-    // If mode is paint over all, the victim is overridden
-    mergeTable[1-iClear][i] = DrawOverLabel((LabelType) i);
-    }
+  // Inversion state
+  bool invert = m_GlobalState->GetPolygonInvert();
 
   // Go through both iterators, copy the new over the old
-  itSource.GoToBegin();
-  itTarget.GoToBegin();
   while(!itSource.IsAtEnd())
     {
-    // Get the two voxels
-    LabelType &voxIRIS = itTarget.Value();    
+    // Get the level set value
     float voxSNAP = itSource.Value();
-
-    // Check that we're ok (debug mode only)
-    assert(!itTarget.IsAtEnd());
-
-    // Perform the merge
-    voxIRIS = mergeTable[voxSNAP <= 0 ? 1 : 0][voxIRIS];
+    if((!invert && voxSNAP <= 0) || (invert && voxSNAP >= 0))
+      itTarget.PaintAsForeground();
 
     // Iterate
     ++itSource;
     ++itTarget;
     }
 
-  // The target has been modified
-  target->Modified();
+  // Finalize the segmentation
+  itTarget.Finalize();
+
+  // Store the undo delta
+  if(itTarget.GetNumberOfChangedVoxels() > 0)
+    {
+    m_IRISImageData->StoreUndoPoint("Automatic Segmentation", itTarget.RelinquishDelta());
+    RecordCurrentLabelUse();
+    InvokeEvent(SegmentationChangeEvent());
+    }
 }
 
 void
@@ -729,25 +755,15 @@ IRISApplication
 }
 
 
+
 void
 IRISApplication
-::StoreUndoPoint(const char *text)
+::RecordCurrentLabelUse()
 {
-  // Delegate to the image data
-  m_CurrentImageData->StoreUndoPoint(text);
-
-  // TODO: I am not sure this is the best place for this code. I think it's a
-  // good idea to migrate all of the code that deals with updating the
-  // segmentation image into one place, such as the LabelImageWrapper class.
-
-  // Along with the undo point, we would like to store the combination of
-  // the foreground and background label used for this update. This will
-  // help us keep track of the most recently used combinations.
   m_LabelUseHistory->RecordLabelUse(
         m_GlobalState->GetDrawingColorLabel(),
         m_GlobalState->GetDrawOverFilter());
 }
-
 
 void
 IRISApplication
@@ -764,53 +780,55 @@ IRISApplication
   return m_CurrentImageData->IsUndoPossible();
 }
 
-/*
 void
 IRISApplication
 ::Undo()
 {
+  m_CurrentImageData->Undo();
+  /*
+=======
   // In order to undo, we must take the 'current' delta and apply
   // it to the image
   UndoManagerType::Delta *delta = m_UndoManager.GetDeltaForUndo();
+  UndoManagerType::Delta *cumulative = new UndoManagerType::Delta();
 
-  LabelImageWrapper *imUndo = m_IRISImageData->GetUndoImage();
-  LabelImageWrapper *imSeg = m_IRISImageData->GetSegmentation();
-  LabelType *dundo = imUndo->GetVoxelPointer();
-  LabelType *dseg = imSeg->GetVoxelPointer();
+  LabelImageType *imSeg = m_IRISImageData->GetSegmentation()->GetImage();
+  typedef itk::ImageRegionIterator<LabelImageType> IteratorType;
+  IteratorType it(imSeg, imSeg->GetLargestPossibleRegion());
 
-  // Applying the delta means adding 
+  // Applying the delta means adding
   for(size_t i = 0; i < delta->GetNumberOfRLEs(); i++)
     {
     size_t n = delta->GetRLELength(i);
     LabelType d = delta->GetRLEValue(i);
     if(d == 0)
       {
-      dundo += n;
-      dseg += n;
+      for(size_t j = 0; j < n; j++)
+        {
+        cumulative->Encode(it.Get());
+        ++it;
+        }
       }
     else
       {
       for(size_t j = 0; j < n; j++)
         {
-        *dundo -= d;
-        *dseg = *dundo;
-        ++dundo; ++dseg;
+        LabelType v = it.Get();
+        v -= d;
+        it.Set(v);
+        cumulative->Encode(v);
+        ++it;
         }
       }
     }
 
-  // Set modified flags
-  imSeg->GetImage()->Modified();
-  imUndo->GetImage()->Modified();
-  InvokeEvent(SegmentationChangeEvent());
-}
-*/
+  cumulative->FinishEncoding();
+  m_UndoManager.SetCumulativeDelta(cumulative);
 
-void
-IRISApplication
-::Undo()
-{
-  m_CurrentImageData->Undo();
+  // Set modified flags
+  imSeg->Modified();
+>>>>>>> dev_3.6
+*/
   InvokeEvent(SegmentationChangeEvent());
 }
 
@@ -826,6 +844,50 @@ IRISApplication
 ::Redo()
 {
   m_CurrentImageData->Redo();
+  /*
+=======
+  // In order to undo, we must take the 'current' delta and apply
+  // it to the image
+  UndoManagerType::Delta *delta = m_UndoManager.GetDeltaForRedo();
+  LabelImageType *imSeg = m_IRISImageData->GetSegmentation()->GetImage();
+  typedef itk::ImageRegionIterator<LabelImageType> IteratorType;
+  IteratorType it(imSeg, imSeg->GetLargestPossibleRegion());
+
+  UndoManagerType::Delta *cumulative = new UndoManagerType::Delta();
+
+  // Applying the delta means adding
+  for(size_t i = 0; i < delta->GetNumberOfRLEs(); i++)
+    {
+    size_t n = delta->GetRLELength(i);
+    LabelType d = delta->GetRLEValue(i);
+    if(d == 0)
+      {
+      for(size_t j = 0; j < n; j++)
+        {
+        cumulative->Encode(it.Get());
+        ++it;
+        }
+      }
+    else
+      {
+      for(size_t j = 0; j < n; j++)
+        {
+        LabelType v = it.Get();
+        v += d;
+        it.Set(v);
+        cumulative->Encode(v);
+        ++it;
+        }
+      }
+    }
+
+  cumulative->FinishEncoding();
+  m_UndoManager.SetCumulativeDelta(cumulative);
+
+  // Set modified flags
+  imSeg->Modified();
+>>>>>>> dev_3.6
+*/
   InvokeEvent(SegmentationChangeEvent());
 }
 
@@ -849,10 +911,10 @@ IRISApplication
   Vector3d cursorSource = to_double(this->GetCursorPosition());
 
   Vector3d xyzSource =
-      source->GetMain()->TransformVoxelIndexToNIFTICoordinates(cursorSource);
+      source->GetMain()->TransformVoxelCIndexToNIFTICoordinates(cursorSource);
 
   itk::Index<3> indexTarget =
-      to_itkIndex(target->GetMain()->TransformNIFTICoordinatesToVoxelIndex(xyzSource));
+      to_itkIndex(target->GetMain()->TransformNIFTICoordinatesToVoxelCIndex(xyzSource));
 
   Vector3ui newCursor =
       target->GetMain()->GetBufferedRegion().IsInside(indexTarget)
@@ -1174,7 +1236,7 @@ IRISApplication
 }
 
 
-void 
+int
 IRISApplication
 ::RelabelSegmentationWithCutPlane(const Vector3d &normal, double intercept) 
 {
@@ -1182,20 +1244,10 @@ IRISApplication
   LabelImageWrapper::ImagePointer imgLabel = 
     m_CurrentImageData->GetSegmentation()->GetImage();
   
-  // Get an iterator for the image
-  typedef itk::ImageRegionIteratorWithIndex<
-    LabelImageWrapper::ImageType> IteratorType;
-  IteratorType it(imgLabel, imgLabel->GetBufferedRegion());
-
-  // Compute a label mapping table based on the color labels
-  LabelType table[MAX_COLOR_LABELS];
-  
-  // The clear label does not get painted over, no matter what
-  table[0] = 0;
-
-  // The other labels get painted over, depending on current settings
-  for(unsigned int i = 1; i < MAX_COLOR_LABELS; i++)
-    table[i] = DrawOverLabel(i);
+  // Create the smart target iterator
+  SegmentationUpdateIterator it(
+        imgLabel, imgLabel->GetBufferedRegion(),
+        m_GlobalState->GetDrawingColorLabel(), m_GlobalState->GetDrawOverFilter());
 
   // Adjust the intercept by 0.5 for voxel offset
   intercept -= 0.5 * (normal[0] + normal[1] + normal[2]);
@@ -1204,7 +1256,7 @@ IRISApplication
   while(!it.IsAtEnd())
     {
     // Compute the distance to the plane
-    const long *index = it.GetIndex().GetIndex();
+    itk::Index<3> index = it.GetIndex();
     double distance = 
       index[0]*normal[0] + 
       index[1]*normal[1] + 
@@ -1212,22 +1264,24 @@ IRISApplication
 
     // Check the side of the plane
     if(distance > 0)
-      {
-      LabelType voxel = it.Value();
-      LabelType newvox = table[voxel];
-      if(voxel != newvox)
-        {
-        it.Set(newvox);
-        m_SegmentationChangeCount++;
-        }
-      }
+      it.PaintAsForegroundPreserveClear();
 
     // Next voxel
     ++it;
     }
-  
-  // Register that the image has been updated
-  imgLabel->Modified();
+
+  // Finalize
+  it.Finalize();
+
+  // Store the undo point if needed
+  if(it.GetNumberOfChangedVoxels() > 0)
+    {
+    m_CurrentImageData->StoreUndoPoint("3D scalpel", it.RelinquishDelta());
+    RecordCurrentLabelUse();
+    InvokeEvent(SegmentationChangeEvent());
+    }
+
+  return it.GetNumberOfChangedVoxels();
 }
 
 int 
@@ -1375,6 +1429,91 @@ IRISApplication
   return 0;
 }
 
+#include "itkMatrixOffsetTransformBase.h"
+
+SmartPtr<IRISApplication::ITKTransformType>
+IRISApplication
+::ReadTransform(Registry *reg, bool &is_identity)
+{
+  typedef itk::IdentityTransform<double, 3> IdTransform;
+  SmartPtr<IdTransform> id_transform = IdTransform::New();
+  SmartPtr<ITKTransformType> transform = id_transform.GetPointer();
+  is_identity = true;
+
+  // No registry? Return identity transform
+  if(!reg)
+    return transform;
+
+  // Is the transform identity
+  Registry &folder = reg->Folder("ImageTransform");
+  is_identity = folder["IsIdentity"][true];
+  if(is_identity)
+    {
+    return transform;
+    }
+
+  // Not an identity transform - so read the parameters
+  typedef itk::MatrixOffsetTransformBase<double, 3, 3> MOTBTransformType;
+  typedef MOTBTransformType::MatrixType MatrixType;
+  typedef MOTBTransformType::OffsetType OffsetType;
+
+  // Read the matrix, defaulting to identity
+  MatrixType matrix; matrix.SetIdentity();
+  OffsetType offset; offset.Fill(0.0);
+
+  for(int i = 0; i < 3; i++)
+    {
+    offset[i] = folder[folder.Key("Offset.Element[%d]",i)][offset[i]];
+    for(int j = 0; j < 3; j++)
+      matrix(i, j) = folder[folder.Key("Matrix.Element[%d][%d]",i,j)][matrix(i,j)];
+    }
+
+  // Check the matrix and offset for being identity
+  if(matrix.GetVnlMatrix().is_identity() && offset.GetVnlVector().is_zero())
+    {
+    is_identity = true;
+    return transform;
+    }
+
+  // Use the matrix/offset transform
+  SmartPtr<MOTBTransformType> motb = MOTBTransformType::New();
+  motb->SetMatrix(matrix);
+  motb->SetOffset(offset);
+  transform = motb.GetPointer();
+  return transform;
+}
+
+void
+IRISApplication
+::WriteTransform(Registry *reg, const ITKTransformType *transform)
+{
+  // Get the target folder
+  Registry &folder = reg->Folder("ImageTransform");
+
+  // Cast the transform to the matrix/offset type
+  typedef itk::MatrixOffsetTransformBase<double, 3, 3> MOTBTransformType;
+  const MOTBTransformType *motb = dynamic_cast<const MOTBTransformType *>(transform);
+
+  // Check for identity
+  if(!motb || (motb->GetMatrix().GetVnlMatrix().is_identity() &&
+               motb->GetOffset().GetVnlVector().is_zero()))
+    {
+    folder["IsIdentity"] << true;
+    folder.RemoveKeys("Matrix");
+    folder.RemoveKeys("Offset");
+    }
+  else
+    {
+    folder["IsIdentity"] << false;
+
+    for(int i = 0; i < 3; i++)
+      {
+      folder[folder.Key("Offset.Element[%d]",i)] << motb->GetOffset()[i];
+      for(int j = 0; j < 3; j++)
+        folder[folder.Key("Matrix.Element[%d][%d]",i,j)] << motb->GetMatrix()(i,j);
+      }
+    }
+}
 
 void
 IRISApplication
@@ -1384,8 +1523,44 @@ IRISApplication
   assert(m_IRISImageData->IsMainLoaded());
   assert(io->IsNativeImageLoaded());
 
-  // Add the image as the current grayscale overlay
-  m_IRISImageData->AddOverlay(io);
+  // Test if the image is in the same size as the main image
+  ImageWrapperBase *main = this->m_IRISImageData->GetMain();
+  bool same_size = (main->GetSize() == io->GetDimensionsOfNativeImage());
+
+  // Now test the 3D geometry of the image to see if it occupies the same space
+  bool same_space = true;
+
+  // Read the transform from the registry. This method will return an identity transform
+  // even if no registry was provided
+  bool id_transform = true;
+  SmartPtr<ITKTransformType> transform = this->ReadTransform(metadata, id_transform);
+
+  // We use a tolerance for header comparisons here
+  double tol = 1e-5;
+
+  for(int i = 0; i < 3; i++)
+    {
+    if(fabs(io->GetNativeImage()->GetOrigin()[i] - main->GetImageBase()->GetOrigin()[i]) > tol)
+      same_space = false;
+    if(fabs(io->GetNativeImage()->GetSpacing()[i] - main->GetImageBase()->GetSpacing()[i]) > tol)
+      same_space = false;
+    for(int j = 0; j < 3; j++)
+      {
+      if(fabs(io->GetNativeImage()->GetDirection()[i][j] - main->GetImageBase()->GetDirection()[i][j]) > tol)
+        same_space = false;
+      }
+    }
+
+  // TODO: in situations where the size is the same and space is different, we may want
+  // to ask the user how to handle it, or at least display a warning? For now, we just use
+  // the header information, which may be different from how old ITK-SNAP handled this
+
+  // Old code - prevented registration of same-size images
+  // if(same_size && same_space && id_transform)
+  //  m_IRISImageData->AddOverlay(io);
+  // else
+  m_IRISImageData->AddCoregOverlay(io, transform);
+
   ImageWrapperBase *layer = m_IRISImageData->GetLastOverlay();
 
   // Set the filename of the overlay
@@ -1417,8 +1592,10 @@ IRISApplication
   if(m_GlobalState->GetDefaultBehaviorSettings()->GetAutoContrast())
     AutoContrastLayerOnLoad(layer);
 
-  // Set the selected layer ID to be the new overlay
-  m_GlobalState->SetSelectedLayerId(layer->GetUniqueId());
+  // Set the selected layer ID to be the new selected overlay - but only if it is
+  // not sticky!
+  if(!layer->IsSticky())
+    m_GlobalState->SetSelectedLayerId(layer->GetUniqueId());
 
   // Fire event
   InvokeEvent(LayerChangeEvent());
@@ -1426,10 +1603,12 @@ IRISApplication
 
 void
 IRISApplication
-::AddDerivedOverlayImage(ImageWrapperBase *overlay)
+::AddDerivedOverlayImage(
+    const ImageWrapperBase *sourceLayer,
+    ImageWrapperBase *overlay,
+    bool inherit_colormap)
 {
   assert(this->IsMainImageLoaded());
-  ImageWrapperBase *layer = m_CurrentImageData->GetLastOverlay();
 
   // Add the image as the current grayscale overlay
   m_CurrentImageData->AddOverlay(overlay);
@@ -1439,70 +1618,32 @@ IRISApplication
   m_CurrentImageData->SetCrosshairs(m_GlobalState->GetCrosshairsPosition());
 
   // Apply the default color map for overlays
-  std::string deflt_preset =
-      m_GlobalState->GetDefaultBehaviorSettings()->GetOverlayColorMapPreset();
-  m_ColorMapPresetManager->SetToPreset(layer->GetDisplayMapping()->GetColorMap(),
-                                       deflt_preset);
+  if(inherit_colormap)
+    {
+    const ColorMap *cmSource = sourceLayer->GetDisplayMapping()->GetColorMap();
+    ColorMap *cmOverlay = overlay->GetDisplayMapping()->GetColorMap();
+    if(cmSource && cmOverlay)
+      cmOverlay->CopyInformation(cmSource);
+    }
+  else
+    {
+    std::string deflt_preset =
+        m_GlobalState->GetDefaultBehaviorSettings()->GetOverlayColorMapPreset();
+    m_ColorMapPresetManager->SetToPreset(overlay->GetDisplayMapping()->GetColorMap(),
+                                         deflt_preset);
+    }
 
   // Initialize the layer-specific segmentation parameters
-  CreateSegmentationSettings(layer, OVERLAY_ROLE);
+  CreateSegmentationSettings(overlay, OVERLAY_ROLE);
 
   // If the default is to auto-contrast, perform the contrast adjustment
   // operation on the image
   if(m_GlobalState->GetDefaultBehaviorSettings()->GetAutoContrast())
-    AutoContrastLayerOnLoad(layer);
+    AutoContrastLayerOnLoad(overlay);
 
   // Set the selected layer ID to be the new overlay
-  m_GlobalState->SetSelectedLayerId(layer->GetUniqueId());
-
-  // Fire event
-  InvokeEvent(LayerChangeEvent());
-}
-
-// TODO: this code is 99% same as above - fix it!
-void
-IRISApplication
-::AddIRISCoregOverlayImage(GuidedNativeImageIO *io, Registry *metadata)
-{
-  assert(!IsSnakeModeActive());
-  assert(m_IRISImageData->IsMainLoaded());
-  assert(io->IsNativeImageLoaded());
-
-  // Add the image as the current grayscale overlay
-  m_IRISImageData->AddCoregOverlay(io);
-
-  // Set the filename of the overlay
-  // TODO: this is cumbersome, could we just initialize the wrapper from the
-  // GuidedNativeImageIO without passing all this junk around?
-  m_IRISImageData->GetLastOverlay()->SetFileName(io->GetFileNameOfNativeImage());
-
-  // Add the overlay to the history
-  m_HistoryManager->UpdateHistory("AnatomicImage", io->GetFileNameOfNativeImage(), true);
-
-  // for overlay, we don't want to change the cursor location
-  // just force the IRISSlicer to update
-  m_IRISImageData->SetCrosshairs(m_GlobalState->GetCrosshairsPosition());
-
-  // Apply the default color map for overlays
-  std::string deflt_preset =
-      m_GlobalState->GetDefaultBehaviorSettings()->GetOverlayColorMapPreset();
-  m_ColorMapPresetManager->SetToPreset(
-        m_IRISImageData->GetLastOverlay()->GetDisplayMapping()->GetColorMap(),
-        deflt_preset);
-
-  // Initialize the layer-specific segmentation parameters
-  CreateSegmentationSettings(m_IRISImageData->GetLastOverlay(), OVERLAY_ROLE);
-
-  // Read and apply the project-level settings associated with the main image
-  LoadMetaDataAssociatedWithLayer(
-        m_IRISImageData->GetLastOverlay(), OVERLAY_ROLE, metadata);
-
-  // If the default is to auto-contrast, perform the contrast adjustment
-  // operation on the image
-  if(m_GlobalState->GetDefaultBehaviorSettings()->GetAutoContrast())
-    {
-    AutoContrastLayerOnLoad(m_IRISImageData->GetLastOverlay());
-    }
+  if(!overlay->IsSticky())
+    m_GlobalState->SetSelectedLayerId(overlay->GetUniqueId());
 
   // Fire event
   InvokeEvent(LayerChangeEvent());
@@ -1681,6 +1822,13 @@ void IRISApplication
   // Write the metadata for the specific layer
   layer->WriteMetaData(folder->Folder("LayerMetaData"));
 
+  // Write the layer IO hints - overriding the association file data
+  if(!layer->GetIOHints().IsEmpty())
+    {
+    folder->Folder("IOHints").Clear();
+    folder->Folder("IOHints").Update(layer->GetIOHints());
+    }
+
   // For the main image layer, write the project-level settings
   if(role == MAIN_ROLE)
     {
@@ -1746,23 +1894,30 @@ IRISApplication
   InvokeEvent(MainImageDimensionsChangeEvent());
 }
 
-void IRISApplication
+ImageWrapperBase *
+IRISApplication
 ::LoadImageViaDelegate(const char *fname,
                        AbstractLoadImageDelegate *del,
-                       IRISWarningList &wl)
+                       IRISWarningList &wl,
+                       Registry *ioHints)
 {
-  // Load the settings associated with this file
-  Registry reg;
-  m_SystemInterface->FindRegistryAssociatedWithFile(fname, reg);
+  Registry regAssoc;
 
-  // Get the folder dealing with grey image properties
-  Registry &folder = reg.Folder("Files.Grey");
+  // When hints are not provided, we load them using the association system
+  if(!ioHints)
+    {
+    // Load the settings associated with this file
+    m_SystemInterface->FindRegistryAssociatedWithFile(fname, regAssoc);
+
+    // Get the folder dealing with grey image properties
+    ioHints = &regAssoc.Folder("Files.Grey");
+    }
 
   // Create a native image IO object
   SmartPtr<GuidedNativeImageIO> io = GuidedNativeImageIO::New();
 
   // Load the header of the image
-  io->ReadNativeImageHeader(fname, folder);
+  io->ReadNativeImageHeader(fname, *ioHints);
 
   // Validate the header
   del->ValidateHeader(io, wl);
@@ -1777,12 +1932,133 @@ void IRISApplication
   del->ValidateImage(io, wl);
 
   // Put the image in the right place
-  del->UpdateApplicationWithImage(io);
+  ImageWrapperBase *layer = del->UpdateApplicationWithImage(io);
+
+  // Store the IO hints inside of the image - in case it ever gets added
+  // to a project
+  layer->SetIOHints(*ioHints);
+
+  return layer;
+}
+
+IRISApplication::DicomSeriesTree
+IRISApplication::ListAvailableSiblingDicomSeries()
+{
+  // Create an empty listing
+  DicomSeriesTree available_dicoms;
+
+  // Create a structure to keep track of already loaded DICOM series so they
+  // are not included
+  std::map< std::string, std::set<std::string> > loaded_dicoms;
+
+  // Iterate through the loaded image layers
+  LayerIterator it = this->GetIRISImageData()->GetLayers(MAIN_ROLE | OVERLAY_ROLE);
+  for(; !it.IsAtEnd(); ++it)
+    {
+    // Get the IO hints registry
+    Registry io_hints = it.GetLayer()->GetIOHints();
+
+    // Is this image a DICOM?
+    if(io_hints.HasFolder("DICOM"))
+      {
+      // Get the directory of the DICOM files
+      std::string layer_fn = it.GetLayer()->GetFileName();
+      if(!itksys::SystemTools::FileIsDirectory(layer_fn))
+        layer_fn = itksys::SystemTools::GetParentDirectory(layer_fn);
+
+      // Get the series ID of the DICOM files
+      std::string layer_series_id = io_hints["DICOM.SeriesId"][""];
+      loaded_dicoms[layer_fn].insert(layer_series_id);
+
+      // Has this directory already been included? Then we can skip the rest
+      if(available_dicoms.find(layer_fn) == available_dicoms.end())
+        {
+        // Get the number of DICOM siblings
+        int n_entries = io_hints["DICOM.DirectoryInfo.ArraySize"][0];
+        for(int i = 0; i < n_entries; i++)
+          {
+          // Read the entry for this ID
+          DicomSeriesDescriptor desc;
+          Registry &r = io_hints.Folder(io_hints.Key("DICOM.DirectoryInfo.Entry[%d]", i));
+          desc.series_id = r["SeriesId"][""];
+          if(desc.series_id.length())
+            {
+            desc.series_desc = r["SeriesDescription"][""];
+            desc.dimensions = r["Dimensions"][""];
+            desc.layer_uid = it.GetLayer()->GetUniqueId();
+            available_dicoms[layer_fn].push_back(desc);
+            }
+          }
+        }
+      }
+    }
+
+  // Loop again and remove series that are already loaded
+  DicomSeriesTree::iterator it_map = available_dicoms.begin();
+  while(it_map != available_dicoms.end())
+    {
+    DicomSeriesListing::iterator it_list = it_map->second.begin();
+    while(it_list != it_map->second.end())
+      {
+      if(loaded_dicoms[it_map->first].count(it_list->series_id))
+        it_map->second.erase(it_list++);
+      else
+        it_list++;
+      }
+
+    if(it_map->second.size() == 0)
+      available_dicoms.erase(it_map++);
+    else
+      it_map++;
+    }
+
+  // Return the map
+  return available_dicoms;
+}
+
+#include "MetaDataAccess.h"
+
+void IRISApplication
+::AssignNicknameFromDicomMetadata(ImageWrapperBase *layer)
+{
+  const std::string tag = "0008|103e";
+  MetaDataAccess mda(layer->GetImageBase());
+  if(mda.HasKey(tag))
+    layer->SetCustomNickname(mda.GetValueAsString(tag));
 }
 
 void IRISApplication
-::LoadImage(const char *fname, LayerRole role,
-            IRISWarningList &wl, Registry *meta_data_reg)
+::LoadAnotherDicomSeriesViaDelegate(unsigned long reference_layer_id,
+                                    const char *series_id,
+                                    AbstractLoadImageDelegate *del,
+                                    IRISWarningList &wl)
+{
+  // We will use the main image's IO hints to create the IO hints for the
+  // image that is being loaded.
+  ImageWrapperBase *ref =
+      this->GetIRISImageData()->FindLayer(reference_layer_id, false);
+
+  if(ref)
+    {
+    // Create a copy of these hints for the new image we are loading
+    Registry io_hints = ref->GetIOHints();
+
+    // Replace the SeriesID with the one we are intending to load
+    io_hints["DICOM.SeriesId"] << series_id;
+
+    // Use the current filename of the main image
+    ImageWrapperBase *layer =
+        this->LoadImageViaDelegate(ref->GetFileName(), del, wl, &io_hints);
+
+    // Assign the series ID of the loaded image as the nickname
+    if(layer->GetCustomNickname().length() == 0)
+      this->AssignNicknameFromDicomMetadata(layer);
+    }
+}
+
+void IRISApplication
+::LoadImage(const char *fname, LayerRole role, IRISWarningList &wl,
+            Registry *meta_data_reg, Registry *io_hints_reg)
 {
   // Pointer to the delegate
   SmartPtr<AbstractLoadImageDelegate> delegate;
@@ -1805,7 +2081,9 @@ void IRISApplication
   delegate->Initialize(this);
   if(meta_data_reg)
     delegate->SetMetaDataRegistry(meta_data_reg);
-  this->LoadImageViaDelegate(fname, delegate, wl);
+
+  // Load via delegate, providing the IO hints
+  this->LoadImageViaDelegate(fname, delegate, wl, io_hints_reg);
 }
 
 SmartPtr<AbstractSaveImageDelegate>
@@ -1911,11 +2189,21 @@ void IRISApplication::SaveProjectToRegistry(Registry &preg, const std::string pr
 
     // Save the metadata associated with the layer
     SaveMetaDataAssociatedWithLayer(layer, it.GetRole(), &folder);
+
+    // Save the layer transform - relevant only for overlays
+    if(it.GetRole() == OVERLAY_ROLE)
+      {
+      this->WriteTransform(&folder, layer->GetITKTransform());
+      }
     }
 
   // Save the annotations in the workspace
   Registry &ann_folder = preg.Folder("Annotations");
   this->m_IRISImageData->GetAnnotations()->SaveAnnotations(ann_folder);
+
+  // Recursively search and delete empty folders
+  preg.CleanZeroSizeArrays();
+  preg.CleanEmptyFolders();
 }
 
 void IRISApplication::SaveProject(const std::string &proj_file)
@@ -2011,8 +2299,15 @@ void IRISApplication::OpenProject(
         layer_file_full = moved_file_full;
       }
 
+    // Load the IO hints for the image from the project - but only if this
+    // folder is actually present (otherwise some projects from before 2016
+    // will not load hints)
+    Registry *io_hints = NULL;
+    if(folder.HasFolder("IOHints"))
+      io_hints = &folder.Folder("IOHints");
+
     // Load the image and its metadata
-    LoadImage(layer_file_full.c_str(), role, warn, &folder);
+    LoadImage(layer_file_full.c_str(), role, warn, &folder, io_hints);
 
     // Check if the main has been loaded
     if(role == MAIN_ROLE)
@@ -2337,7 +2632,7 @@ void IRISApplication::EnterGMMPreprocessingMode()
 void IRISApplication::EnterRandomForestPreprocessingMode()
 {
   // Create a random forest classification engine
-  m_ClassificationEngine = RFClassificationEngine::New();
+  m_ClassificationEngine = RFEngine::New();
   m_ClassificationEngine->SetDataSource(m_SNAPImageData);
 
   // Check if we can reuse the classifier from the last run

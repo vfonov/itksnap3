@@ -55,13 +55,13 @@ endforeach()
 
 # These four fields should be modified when versions change
 SET(SNAP_VERSION_MAJOR 3)
-SET(SNAP_VERSION_MINOR 4)
+SET(SNAP_VERSION_MINOR 6)
 SET(SNAP_VERSION_PATCH 0)
 SET(SNAP_VERSION_QUALIFIER "")
 
 # These fields should also be modified each time
-SET(SNAP_VERSION_RELEASE_DATE "20151130")
-SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Nov 30, 2015")
+SET(SNAP_VERSION_RELEASE_DATE "20170401")
+SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Apr 1, 2017")
 
 # This field should only change when the format of the settings files changes
 # in a non backwards-compatible way
@@ -85,6 +85,17 @@ get_git_branch(SNAP_VERSION_GIT_BRANCH)
 
 # Print the Git information
 MESSAGE(STATUS "   GIT Info: BRANCH ${SNAP_VERSION_GIT_BRANCH}, SHA: ${SNAP_VERSION_GIT_SHA1}")
+
+#--------------------------------------------------------------------------------
+# ENSURE THAT SUBMODULES HAVE BEEN INITIALIZED AND UPDATED
+#--------------------------------------------------------------------------------
+if(NOT EXISTS "${SNAP_SOURCE_DIR}/Submodules/c3d/CMakeLists.txt")
+  MESSAGE(SEND_ERROR "Submodule c3d has not been initialized/updated. Git users, see README.git")
+endif()
+
+if(NOT EXISTS "${SNAP_SOURCE_DIR}/Submodules/greedy/CMakeLists.txt")
+  MESSAGE(SEND_ERROR "Submodule greedy has not been initialized/updated. Git users, see README.git")
+endif()
 
 #--------------------------------------------------------------------------------
 # FIND PACKAGES IF BUILDING OUTSIDE INSIGHTAPPLICATIONS 
@@ -240,8 +251,7 @@ SET(LOGIC_CXX
   Logic/Preprocessing/GMM/GaussianMixtureModel.cxx
   Logic/Preprocessing/GMM/KMeansPlusPlus.cxx
   Logic/Preprocessing/GMM/UnsupervisedClustering.cxx
-  Logic/Preprocessing/RandomForest/RFClassificationEngine.cxx
-  Logic/Preprocessing/RandomForest/RandomForestClassifier.cxx
+  Logic/Preprocessing/RFClassificationEngine.cxx
   Logic/Preprocessing/Texture/MomentTextures.cxx
   Logic/Slicing/IntensityCurveVTK.cxx
   Logic/Slicing/IntensityToColorLookupTableImageFilter.cxx
@@ -257,6 +267,7 @@ SET(LOGIC_HEADERS
   Common/CommandLineArgumentParser.h
   Common/Credits.h
   Common/HistoryManager.h
+  Common/ImageFunctions.h
   Common/IPCHandler.h
   Common/IRISException.h
   Common/IRISVectorTypes.h
@@ -268,6 +279,8 @@ SET(LOGIC_HEADERS
   Common/ITKExtras/itkBinaryDiamondStructuringElement.txx
   Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.h
   Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.txx
+  Common/ITKExtras/itkMorphologicalContourInterpolator.h
+  Common/ITKExtras/itkMorphologicalContourInterpolator.hxx
   Common/ITKExtras/itkParallelSparseFieldLevelSetImageFilterBugFix.h
   Common/ITKExtras/itkParallelSparseFieldLevelSetImageFilterBugFix.txx
   Common/ITKExtras/itkTopologyPreservingDigitalSurfaceEvolutionImageFilter.h
@@ -311,6 +324,7 @@ SET(LOGIC_HEADERS
   Logic/Framework/LayerAssociation.h
   Logic/Framework/LayerAssociation.txx
   Logic/Framework/LayerIterator.h
+  Logic/Framework/SegmentationUpdateIterator.h
   Logic/Framework/SNAPImageData.h
   Logic/Framework/UndoDataManager.h
   Logic/Framework/UndoDataManager.txx
@@ -320,6 +334,17 @@ SET(LOGIC_HEADERS
   Logic/ImageWrapper/ImageWrapper.h
   Logic/ImageWrapper/ImageWrapperBase.h
   Logic/ImageWrapper/ImageWrapperTraits.h
+  Logic/ImageWrapper/VectorToScalarImageAccessor.h
+  Logic/RLEImage/RLEImage.h
+  Logic/RLEImage/RLEImage.txx
+  Logic/RLEImage/RLEImageConstIterator.h
+  Logic/RLEImage/RLEImageIterator.h
+  Logic/RLEImage/RLEImageRegionConstIterator.h
+  Logic/RLEImage/RLEImageRegionIterator.h
+  Logic/RLEImage/RLEImageScanlineConstIterator.h
+  Logic/RLEImage/RLEImageScanlineIterator.h
+  Logic/RLEImage/RLERegionOfInterestImageFilter.h
+  Logic/RLEImage/RLERegionOfInterestImageFilter.txx
   Logic/ImageWrapper/InputSelectionImageFilter.h
   Logic/ImageWrapper/LabelToRGBAFilter.h
   Logic/ImageWrapper/NativeIntensityMappingPolicy.h
@@ -340,8 +365,6 @@ SET(LOGIC_HEADERS
   Logic/LevelSet/SNAPLevelSetFunction.txx
   Logic/LevelSet/SNAPLevelSetStopAndGoFilter.h
   Logic/LevelSet/SNAPLevelSetStopAndGoFilter.txx
-  Logic/LevelSet/SignedDistanceFilter.h
-  Logic/LevelSet/SignedDistanceFilter.txx
   Logic/LevelSet/SnakeParameters.h
   Logic/Mesh/AllPurposeProgressAccumulator.h
   Logic/Mesh/GuidedMeshIO.h
@@ -356,8 +379,6 @@ SET(LOGIC_HEADERS
   Logic/Preprocessing/GMMClassifyImageFilter.h
   Logic/Preprocessing/GMMClassifyImageFilter.txx
   Logic/Preprocessing/PreprocessingFilterConfigTraits.h
-  Logic/Preprocessing/RandomForestClassifyImageFilter.h
-  Logic/Preprocessing/RandomForestClassifyImageFilter.txx
   Logic/Preprocessing/SlicePreviewFilterWrapper.h
   Logic/Preprocessing/SlicePreviewFilterWrapper.txx
   Logic/Preprocessing/SmoothBinaryThresholdImageFilter.h
@@ -368,15 +389,18 @@ SET(LOGIC_HEADERS
   Logic/Preprocessing/GMM/GaussianMixtureModel.h
   Logic/Preprocessing/GMM/KMeansPlusPlus.h
   Logic/Preprocessing/GMM/UnsupervisedClustering.h
-  Logic/Preprocessing/RandomForest/RFClassificationEngine.h
-  Logic/Preprocessing/RandomForest/RandomForestClassifier.h
   Logic/Preprocessing/Texture/MomentTextures.h
+  Logic/Slicing/ImageRegionConstIteratorWithIndexOverride.h
+  Logic/Slicing/FastLinearInterpolator.h
   Logic/Slicing/IRISSlicer.h
   Logic/Slicing/IRISSlicer.txx
+  Logic/Slicing/IRISSlicer_RLE.txx
   Logic/Slicing/IntensityCurveInterface.h
   Logic/Slicing/IntensityCurveVTK.h
   Logic/Slicing/IntensityToColorLookupTableImageFilter.h
   Logic/Slicing/LookupTableIntensityMappingFilter.h
+  Logic/Slicing/NonOrthogonalSlicer.h
+  Logic/Slicing/NonOrthogonalSlicer.txx
   Logic/Slicing/RGBALookupTableIntensityMappingFilter.h
 )
 
@@ -394,8 +418,9 @@ SET(UI_GENERIC_CXX
   GUI/Model/GlobalUIModel.cxx
   GUI/Model/ImageIOWizardModel.cxx
   GUI/Model/ImageInfoModel.cxx
-  GUI/Model/ImageRegistrationManager.cxx
   GUI/Model/IntensityCurveModel.cxx
+  GUI/Model/InteractiveRegistrationModel.cxx
+  GUI/Model/InterpolateLabelModel.cxx
   GUI/Model/LabelEditorModel.cxx
   GUI/Model/LayerGeneralPropertiesModel.cxx
   GUI/Model/LayerTableRowModel.cxx
@@ -406,6 +431,7 @@ SET(UI_GENERIC_CXX
   GUI/Model/PaintbrushSettingsModel.cxx
   GUI/Model/PolygonDrawingModel.cxx
   GUI/Model/PolygonSettingsModel.cxx
+  GUI/Model/RegistrationModel.cxx
   GUI/Model/ReorientImageModel.cxx
   GUI/Model/SaveModifiedLayersModel.cxx
   GUI/Model/SliceWindowCoordinator.cxx
@@ -435,6 +461,7 @@ SET(UI_GENERIC_CXX
   GUI/Renderer/PaintbrushRenderer.cxx
   GUI/Renderer/PolygonDrawingRenderer.cxx
   GUI/Renderer/PolygonScanConvert.cxx
+  GUI/Renderer/RegistrationRenderer.cxx
   GUI/Renderer/SliceWindowDecorationRenderer.cxx
   GUI/Renderer/SnakeParameterPreviewRenderer.cxx
   GUI/Renderer/SnakeROIRenderer.cxx
@@ -464,8 +491,9 @@ SET(UI_GENERIC_HEADERS
   GUI/Model/GlobalUIModel.h
   GUI/Model/ImageInfoModel.h
   GUI/Model/ImageIOWizardModel.h
-  GUI/Model/ImageRegistrationManager.h
   GUI/Model/IntensityCurveModel.h
+  GUI/Model/InteractiveRegistrationModel.h
+  GUI/Model/InterpolateLabelModel.h
   GUI/Model/LabelEditorModel.h
   GUI/Model/LayerGeneralPropertiesModel.h
   GUI/Model/LayerSelectionModel.h
@@ -476,6 +504,7 @@ SET(UI_GENERIC_HEADERS
   GUI/Model/PaintbrushSettingsModel.h
   GUI/Model/PolygonSettingsModel.h
   GUI/Model/PolygonDrawingModel.h
+  GUI/Model/RegistrationModel.h
   GUI/Model/ReorientImageModel.h
   GUI/Model/SaveModifiedLayersModel.h
   GUI/Model/SNAPUIFlag.h
@@ -508,6 +537,7 @@ SET(UI_GENERIC_HEADERS
   GUI/Renderer/PaintbrushRenderer.h
   GUI/Renderer/PolygonDrawingRenderer.h
   GUI/Renderer/PolygonScanConvert.h
+  GUI/Renderer/RegistrationRenderer.h
   GUI/Renderer/SliceWindowDecorationRenderer.h
   GUI/Renderer/SnakeParameterPreviewRenderer.h
   GUI/Renderer/SnakeROIRenderer.h
@@ -531,6 +561,7 @@ SET(UI_QT_CXX
   GUI/Qt/Components/ContrastInspector.cxx
   GUI/Qt/Components/CursorInspector.cxx
   GUI/Qt/Components/DisplayLayoutInspector.cxx
+  GUI/Qt/Components/DICOMListingTable.cxx
   GUI/Qt/Components/FileChooserPanelWithHistory.cxx
   GUI/Qt/Components/HistoryQListModel.cxx
   GUI/Qt/Components/ImageInfoInspector.cxx
@@ -557,6 +588,7 @@ SET(UI_QT_CXX
   GUI/Qt/Components/SnakeToolROIPanel.cxx
   GUI/Qt/Components/SnakeWizardPanel.cxx
   GUI/Qt/Components/SNAPComponent.cxx
+  GUI/Qt/Components/SNAPQApplication.cxx
   GUI/Qt/Components/SNAPQtCommon.cxx
   GUI/Qt/Components/SliceViewPanel.cxx
   GUI/Qt/Components/SynchronizationInspector.cxx
@@ -578,6 +610,7 @@ SET(UI_QT_CXX
   GUI/Qt/View/QtVTKRenderWindowBox.cxx
   GUI/Qt/View/PaintbrushInteractionMode.cxx
   GUI/Qt/View/PolygonDrawingInteractionMode.cxx
+  GUI/Qt/View/RegistrationInteractionMode.cxx
   GUI/Qt/View/SliceWindowInteractionDelegateWidget.cxx
   GUI/Qt/View/SnakeROIInteractionMode.cxx
   GUI/Qt/View/ThumbnailInteractionMode.cxx
@@ -586,7 +619,7 @@ SET(UI_QT_CXX
   GUI/Qt/Windows/ImageIODialog.cxx
   GUI/Qt/Windows/ImageIOWizard.cxx
   GUI/Qt/Windows/ImageIOWizard/OverlayRolePage.cxx
-  GUI/Qt/Windows/ImageIOWizard/RegistrationPage.cxx
+  GUI/Qt/Windows/InterpolateLabelsDialog.cxx
   GUI/Qt/Windows/LabelEditorDialog.cxx
   GUI/Qt/Windows/LayerInspectorDialog.cxx
   GUI/Qt/Windows/LabelSelectionPopup.cxx
@@ -605,6 +638,7 @@ SET(UI_QT_CXX
   GUI/Qt/Windows/MeshExportWizard/MeshExportWizard.cxx
   GUI/Qt/Windows/MeshExportWizard/MeshExportModePage.cxx
   GUI/Qt/Windows/MeshExportWizard/MeshExportBrowsePage.cxx
+  GUI/Qt/Windows/Registration/RegistrationDialog.cxx
   Testing/GUI/Qt/SNAPTestQt.cxx
 )
 
@@ -616,6 +650,7 @@ SET(UI_MOC_HEADERS
   GUI/Qt/Components/ColorMapInspector.h
   GUI/Qt/Components/ContrastInspector.h
   GUI/Qt/Components/CursorInspector.h
+  GUI/Qt/Components/DICOMListingTable.h
   GUI/Qt/Components/DisplayLayoutInspector.h
   GUI/Qt/Components/FileChooserPanelWithHistory.h
   GUI/Qt/Components/HistoryQListModel.h
@@ -641,6 +676,7 @@ SET(UI_MOC_HEADERS
   GUI/Qt/Components/SnakeToolROIPanel.h
   GUI/Qt/Components/SnakeWizardPanel.h
   GUI/Qt/Components/SNAPComponent.h
+  GUI/Qt/Components/SNAPQApplication.h
   GUI/Qt/Components/SliceViewPanel.h
   GUI/Qt/Components/SynchronizationInspector.h
   GUI/Qt/Components/ViewPanel3D.h
@@ -661,15 +697,17 @@ SET(UI_MOC_HEADERS
   GUI/Qt/View/QtVTKRenderWindowBox.h
   GUI/Qt/View/PaintbrushInteractionMode.h
   GUI/Qt/View/PolygonDrawingInteractionMode.h
+  GUI/Qt/View/RegistrationInteractionMode.h
   GUI/Qt/View/SliceWindowInteractionDelegateWidget.h
   GUI/Qt/View/SnakeROIInteractionMode.h
+  GUI/Qt/View/TestOpenGLDialog.h
   GUI/Qt/View/ThumbnailInteractionMode.h
   GUI/Qt/Windows/AboutDialog.h
   GUI/Qt/Windows/DropActionDialog.h
   GUI/Qt/Windows/ImageIODialog.h
   GUI/Qt/Windows/ImageIOWizard.h
   GUI/Qt/Windows/ImageIOWizard/OverlayRolePage.h
-  GUI/Qt/Windows/ImageIOWizard/RegistrationPage.h
+  GUI/Qt/Windows/InterpolateLabelsDialog.h
   GUI/Qt/Windows/LabelEditorDialog.h
   GUI/Qt/Windows/LayerInspectorDialog.h
   GUI/Qt/Windows/LabelSelectionPopup.h
@@ -687,15 +725,17 @@ SET(UI_MOC_HEADERS
   GUI/Qt/Windows/MeshExportWizard/MeshExportWizard.h
   GUI/Qt/Windows/MeshExportWizard/MeshExportModePage.h
   GUI/Qt/Windows/MeshExportWizard/MeshExportBrowsePage.h
+  GUI/Qt/Windows/Registration/RegistrationDialog.h
   Testing/GUI/Qt/SNAPTestQt.h
 )
 
 # These UI headers don't need to be MOC'd
 SET(UI_NONMOC_HEADERS
-  GUI/Qt/Components/SNAPQtCommon.h
+  GUI/Qt/Components/ProcessEventsITKCommand.h
   GUI/Qt/Components/QtCursorOverride.h
   GUI/Qt/Components/QtRendererPlatformSupport.h
   GUI/Qt/Components/QtReporterDelegates.h
+  GUI/Qt/Components/SNAPQtCommon.h
   GUI/Qt/Coupling/QtAbstractButtonCoupling.h
   GUI/Qt/Coupling/QtAbstractItemViewCoupling.h
   GUI/Qt/Coupling/QtActionCoupling.h
@@ -745,7 +785,7 @@ SET(UI_FORMS
   GUI/Qt/Windows/DropActionDialog.ui
   GUI/Qt/Windows/ImageIODialog.ui
   GUI/Qt/Windows/ImageIOWizard/OverlayRolePage.ui
-  GUI/Qt/Windows/ImageIOWizard/RegistrationPage.ui
+  GUI/Qt/Windows/InterpolateLabelsDialog.ui
   GUI/Qt/Windows/LabelEditorDialog.ui
   GUI/Qt/Windows/LayerInspectorDialog.ui
   GUI/Qt/Windows/LabelSelectionPopup.ui
@@ -763,6 +803,7 @@ SET(UI_FORMS
   GUI/Qt/Windows/MeshExportWizard/MeshExportWizard.ui
   GUI/Qt/Windows/MeshExportWizard/MeshExportModePage.ui
   GUI/Qt/Windows/MeshExportWizard/MeshExportBrowsePage.ui
+  GUI/Qt/Windows/Registration/RegistrationDialog.ui
 )
 
 SET(UI_RESOURCES
@@ -835,9 +876,12 @@ ELSE( CMAKE_GENERATOR MATCHES "Visual Studio 6" )
     ${SNAP_SOURCE_DIR}/Logic/Mesh
     ${SNAP_SOURCE_DIR}/Logic/Preprocessing
     ${SNAP_SOURCE_DIR}/Logic/Preprocessing/GMM
-    ${SNAP_SOURCE_DIR}/Logic/Preprocessing/RandomForest
     ${SNAP_SOURCE_DIR}/Logic/Preprocessing/Texture
+    ${SNAP_SOURCE_DIR}/Logic/RLEImage
     ${SNAP_SOURCE_DIR}/Logic/Slicing
+    ${SNAP_SOURCE_DIR}/Submodules/c3d/itkextras/RandomForest
+    ${SNAP_SOURCE_DIR}/Submodules/c3d/api
+    ${SNAP_SOURCE_DIR}/Submodules/greedy/src
     ${SNAP_SOURCE_DIR}/GUI
     ${SNAP_SOURCE_DIR}/GUI/Model
     ${SNAP_SOURCE_DIR}/GUI/Renderer
@@ -852,6 +896,7 @@ ELSE( CMAKE_GENERATOR MATCHES "Visual Studio 6" )
     ${SNAP_SOURCE_DIR}/GUI/Qt/View
     ${SNAP_SOURCE_DIR}/GUI/Qt/Windows
     ${SNAP_SOURCE_DIR}/GUI/Qt/Windows/MeshExportWizard
+    ${SNAP_SOURCE_DIR}/GUI/Qt/Windows/Registration
     ${SNAP_SOURCE_DIR}/Testing/Logic
     ${SNAP_SOURCE_DIR}/Testing/GUI/Qt
     ${SNAP_BINARY_DIR}
@@ -865,10 +910,12 @@ ENDIF( CMAKE_GENERATOR MATCHES "Visual Studio 6" )
 # Compiler-specific warinings
 #--------------------------------------------------------------------------------
 
-# Get rid of this ridiculous warning in VS8
-IF( CMAKE_GENERATOR MATCHES "Visual Studio 8" OR CMAKE_GENERATOR MATCHES "Visual Studio 9" OR CMAKE_GENERATOR MATCHES "Visual Studio 10" )
+# Get rid of this ridiculous warning in VS8+
+IF( MSVC )
   ADD_DEFINITIONS(-D_CRT_SECURE_NO_DEPRECATE)
-ENDIF( CMAKE_GENERATOR MATCHES "Visual Studio 8" OR CMAKE_GENERATOR MATCHES "Visual Studio 9" OR CMAKE_GENERATOR MATCHES "Visual Studio 10" )
+  ADD_DEFINITIONS(-D_SCL_SECURE_NO_WARNINGS)
+  ADD_DEFINITIONS(-D_CRT_SECURE_NO_WARNINGS)
+ENDIF( MSVC )
   
 IF( CMAKE_GENERATOR MATCHES "^NMake" OR CMAKE_GENERATOR MATCHES "^Visual Studio" )
   ADD_DEFINITIONS(-DNOMINMAX)
@@ -882,24 +929,14 @@ ENDIF( CMAKE_GENERATOR MATCHES "^NMake" OR CMAKE_GENERATOR MATCHES "^Visual Stud
 SET(SNAP_ITK_LIBS ${ITK_LIBRARIES})
 
 # Core VTK libraries
-SET(SNAP_VTK_LIBS
-  vtkChartsCore
-  vtkCommonCore
-  vtkRenderingCore
-  vtkRenderingFreeType
-  vtkRenderingFreeTypeOpenGL
-  vtkRenderingOpenGL
-  vtkRenderingVolume
-  vtkRenderingVolumeOpenGL
-  vtkFiltersCore
-  vtkImagingCore
-  vtkViewsCore
-  vtkViewsContext2D
-  vtkIOCore
-  vtkIOExport
-  vtkIOGeometry
-  vtkIOLegacy
-)
+SET(SNAP_VTK_LIBS ${VTK_LIBRARIES})
+
+# Libraries provided by the submodules
+SET(SNAP_SUBMODULE_LIBS
+  cnd_api
+  cnd_driver
+  cnd_adapters
+  greedyapi)
 
 # System libraries
 SET(SNAP_SYSTEM_LIBS
@@ -910,10 +947,30 @@ SET(SNAP_SYSTEM_LIBS
 
 # Designate the external libraries used by SNAP
 SET(SNAP_EXTERNAL_LIBS 
+  ${SNAP_SUBMODULE_LIBS}
   ${SNAP_ITK_LIBS} 
   ${SNAP_VTK_LIBS} 
   ${SNAP_SYSTEM_LIBS}
 )
+
+#--------------------------------------------------------------------------------
+# Include C3D Library as submodule
+#--------------------------------------------------------------------------------
+SET(CONVERT3D_SOURCE_DIR ${SNAP_SOURCE_DIR}/Submodules/c3d)
+SET(CONVERT3D_BINARY_DIR ${SNAP_BINARY_DIR}/Submodules/c3d)
+
+SET(CONVERT3D_BUILD_AS_SUBPROJECT ON)
+ADD_SUBDIRECTORY(${CONVERT3D_SOURCE_DIR})
+
+#--------------------------------------------------------------------------------
+# Include Greedy Library as submodule
+#--------------------------------------------------------------------------------
+SET(GREEDY_TOOL_SOURCE_DIR ${SNAP_SOURCE_DIR}/Submodules/greedy)
+SET(GREEDY_TOOL_BINARY_DIR ${SNAP_BINARY_DIR}/Submodules/greedy)
+
+SET(GREEDY_TOOL_BUILD_AS_SUBPROJECT ON)
+ADD_SUBDIRECTORY(${GREEDY_TOOL_SOURCE_DIR})
+
 
 #--------------------------------------------------------------------------------
 # Define SNAP library targets (logic and UI)
@@ -1013,11 +1070,79 @@ MARK_AS_ADVANCED(SNAP_GUI_TEST_ACCEL)
 # The list of Qt animated GUI tests
 SET(GUI_TESTS
   Workspace
+  DiffSpace
   ProbeIntensity
   RegionCompetition
   RandomForest)
 
 SET(TESTDATA_DIR "${SNAP_SOURCE_DIR}/Testing/TestData")
+set(TEMP ${SNAP_BINARY_DIR}/Testing/Temporary)
+
+ADD_EXECUTABLE(SlicingPerformanceTest Testing/Logic/SlicingPerformanceTest.cxx)
+TARGET_LINK_LIBRARIES(SlicingPerformanceTest ${ITK_LIBRARIES})
+
+ADD_EXECUTABLE(testRLE Testing/Logic/testRLE.cxx)
+TARGET_LINK_LIBRARIES(testRLE ${ITK_LIBRARIES})
+
+ADD_EXECUTABLE(iteratorTests
+    Testing/Logic/itkRegionOfInterestImageFilterTest.cxx
+    Testing/Logic/itkIteratorTests.cxx
+    Testing/Logic/itkImageIteratorsForwardBackwardTest.cxx
+    Testing/Logic/itkImageIteratorTest.cxx
+    Testing/Logic/itkImageIteratorWithIndexTest.cxx
+    Testing/Logic/itkImageRegionConstIteratorWithOnlyIndexTest.cxx
+    Testing/Logic/itkImageRegionIteratorTest.cxx
+    Testing/Logic/itkImageScanlineIteratorTest1.cxx
+    Testing/Logic/iteratorTests.cxx)
+TARGET_LINK_LIBRARIES(iteratorTests ${ITK_LIBRARIES})
+
+add_test(NAME BasicSlicingTestX39 COMMAND itkTestDriver
+  --compare ${TESTDATA_DIR}/X39.nii.gz ${TEMP}/X39.nii.gz
+  $<TARGET_FILE:SlicingPerformanceTest>
+        ${TESTDATA_DIR}/MRIcrop-seg.gipl.gz
+        ${TEMP}/X39.nii.gz
+        X 39 irisRLE
+)
+
+add_test(NAME BasicSlicingTestY55 COMMAND itkTestDriver
+  --compare ${TESTDATA_DIR}/Y55.nii.gz ${TEMP}/Y55.nii.gz
+  $<TARGET_FILE:SlicingPerformanceTest>
+        ${TESTDATA_DIR}/MRIcrop-seg.gipl.gz
+        ${TEMP}/Y55.nii.gz
+        Y 55 irisRLE
+)
+
+add_test(NAME BasicSlicingTestZ32 COMMAND itkTestDriver
+  --compare ${TESTDATA_DIR}/Z32.nii.gz ${TEMP}/Z32.nii.gz
+  $<TARGET_FILE:SlicingPerformanceTest>
+        ${TESTDATA_DIR}/MRIcrop-seg.gipl.gz
+        ${TEMP}/Z32.nii.gz
+        Z 32 irisRLE
+)
+
+add_test(NAME SlicingPerformanceTestX300 COMMAND itkTestDriver
+  --compare ${TESTDATA_DIR}/X300.mha ${TEMP}/X300.mha
+  $<TARGET_FILE:SlicingPerformanceTest>
+        ${TESTDATA_DIR}/vb-seg.mha
+        ${TEMP}/X300.mha
+        X 300 irisRLE
+)
+
+add_test(NAME SlicingPerformanceTestY300 COMMAND itkTestDriver
+  --compare ${TESTDATA_DIR}/Y300.mha ${TEMP}/Y300.mha
+  $<TARGET_FILE:SlicingPerformanceTest>
+        ${TESTDATA_DIR}/vb-seg.mha
+        ${TEMP}/Y300.mha
+        Y 300 irisRLE
+)
+
+add_test(NAME SlicingPerformanceTestZ150 COMMAND itkTestDriver
+  --compare ${TESTDATA_DIR}/Z150.mha ${TEMP}/Z150.mha
+  $<TARGET_FILE:SlicingPerformanceTest>
+        ${TESTDATA_DIR}/vb-seg.mha
+        ${TEMP}/Z150.mha
+        Z 150 irisRLE
+)
 
 # Set up a test for each GUI test
 FOREACH(GUI_TEST ${GUI_TESTS})
@@ -1236,10 +1361,13 @@ ELSE()
     IF(SNAP_PACKAGE_QT_PLUGINS)
 
       get_property(QT_XCB_PLUGIN TARGET Qt5::QXcbIntegrationPlugin PROPERTY LOCATION_RELEASE)
+      get_property(QT_XCB_GLX_PLUGIN TARGET Qt5::QXcbEglIntegrationPlugin PROPERTY LOCATION_RELEASE)
+      get_property(QT_XCB_EGL_PLUGIN TARGET Qt5::QXcbGlxIntegrationPlugin PROPERTY LOCATION_RELEASE)
       get_property(QT_GIF_PLUGIN TARGET Qt5::QGifPlugin PROPERTY LOCATION_RELEASE)
 
       # Install the plugin
-      install_qt5_executable(${SNAP_MAIN_INSTALL_DIR}/${SNAP_EXE} "${QT_XCB_PLUGIN};${QT_GIF_PLUGIN}")
+      install_qt5_executable(${SNAP_MAIN_INSTALL_DIR}/${SNAP_EXE} 
+        "${QT_XCB_PLUGIN};${QT_GIF_PLUGIN};${QT_XCB_GLX_PLUGIN};${QT_XCB_EGL_PLUGIN}")
 
     ELSE(SNAP_PACKAGE_QT_PLUGINS)
 

@@ -92,8 +92,11 @@ void SpeedImageDialog::SetModel(SnakeWizardModel *model)
 
   // Couple the edge preprocessing widgets
   makeCoupling(ui->inEdgeSmoothing, model->GetEdgePreprocessingSigmaModel());
+  makeCoupling(ui->inEdgeSmoothingSlider, model->GetEdgePreprocessingSigmaModel());
   makeCoupling(ui->inEdgeKappa, model->GetEdgePreprocessingKappaModel());
+  makeCoupling(ui->inEdgeKappaSlider, model->GetEdgePreprocessingKappaModel());
   makeCoupling(ui->inEdgeExponent, model->GetEdgePreprocessingExponentModel());
+  makeCoupling(ui->inEdgeExponentSlider, model->GetEdgePreprocessingExponentModel());
 
   // Couple the clustering widgets
   makeCoupling(ui->inNumClusters, model->GetNumberOfClustersModel());
@@ -174,9 +177,11 @@ void SpeedImageDialog::on_btnClassifyLoad_clicked()
   // Create a model for IO
   SmartPtr<LoadSegmentationImageDelegate> delegate = LoadSegmentationImageDelegate::New();
   delegate->Initialize(m_Model->GetParent()->GetDriver());
+  delegate->SetHistoryName("ClassifierSamples");
+  delegate->SetDisplayName("Classifier Samples Image");
 
   SmartPtr<ImageIOWizardModel> model = ImageIOWizardModel::New();
-  model->InitializeForLoad(m_Model->GetParent(), delegate, "ClassifierSamples", "Classifier Samples Image");
+  model->InitializeForLoad(m_Model->GetParent(), delegate);
 
   // Execute the IO wizard
   ImageIOWizard wiz(this);

@@ -16,7 +16,8 @@
 #include <QMouseEvent>
 #include <QApplication>
 #include <QKeySequence>
-
+#include <QDir>
+#include <SNAPQApplication.h>
 
 
 #include "SNAPQtCommon.h"
@@ -73,7 +74,7 @@ SNAPTestQt::LaunchTest(std::string test)
   if(test == "list")
     {
     ListTests();
-    ::exit(SUCCESS);
+    application_exit(SUCCESS);
     }
 
   // Create and run the thread
@@ -135,6 +136,10 @@ QModelIndex SNAPTestQt::findItem(QObject *container, QVariant text)
   return QModelIndex();
 }
 
+void SNAPTestQt::invoke(QObject *object, QString slot)
+{
+  QMetaObject::invokeMethod(object, slot.toStdString().c_str(), Qt::QueuedConnection);
+}
 
 
 QVariant SNAPTestQt::findItemRow(QObject *container, QVariant text)
@@ -210,7 +215,7 @@ void SNAPTestQt::validateValue(QVariant v1, QVariant v2)
     qWarning() << QString("Validation %1 == %2 failed!").arg(v1.toString(),v2.toString());
 
     // Exit with code corresponding to test failure
-    ::exit(REGRESSION_TEST_FAILURE);
+    application_exit(REGRESSION_TEST_FAILURE);
     }
   else
     {
@@ -218,6 +223,13 @@ void SNAPTestQt::validateValue(QVariant v1, QVariant v2)
     qDebug() << QString("Validation %1 == %2 ok!").arg(v1.toString(),v2.toString());
     }
 
+}
+
+void SNAPTestQt::application_exit(int rc)
+{
+  QMetaObject::invokeMethod(
+        QCoreApplication::instance(), "quitWithReturnCode", Qt::QueuedConnection,
+        Q_ARG(int, rc));
 }
 
 void SNAPTestQt::sleep(int milli_sec)
@@ -240,7 +252,7 @@ void SNAPTestQt::validateFloatValue(double v1, double v2, double precision)
     qWarning() << QString("Validation %1 == %2 (with precision %3) failed!").arg(v1).arg(v2).arg(precision);
 
     // Exit with code corresponding to test failure
-    ::exit(REGRESSION_TEST_FAILURE);
+    application_exit(REGRESSION_TEST_FAILURE);
     }
   else
     {
@@ -252,7 +264,7 @@ void SNAPTestQt::validateFloatValue(double v1, double v2, double precision)
 void SNAPTestQt::testFailed(QString reason)
 {
   qWarning() << reason;
-  ::exit(REGRESSION_TEST_FAILURE);
+  application_exit(REGRESSION_TEST_FAILURE);
 }
 
 
@@ -315,11 +327,24 @@ void SNAPTestQt::postKeyEvent(QObject *object, QString key)
     }
 }
 
+
 SNAPTestQt::ReturnCode
 SNAPTestQt::ListTests()
 {
+  QDir script_dir(":/scripts/Scripts");
+  QStringList filters; filters << "test_*.js";
+  script_dir.setNameFilters(filters);
+  QStringList files = script_dir.entryList();
+
+  QRegExp rx("test_(.*).js");
+
   cout << "Available Tests" << endl;
-  cout << "  SnakeThreshQt    : Test segmentation with thresholding option" << endl;
+  foreach(const QString &test, files)
+    {
+    if(rx.indexIn(test) >= 0)
+      cout << "  " << rx.cap(1).toStdString() << endl;
+    }
+
   return SUCCESS;
 }
 
@@ -344,8 +369,8 @@ void TestWorker::run()
   // Run the top-level script
   source(m_MainScript);
 
-  // Once the test has completed, we can exit the application
-  ::exit(SNAPTestQt::SUCCESS);
+  // Exit script
+  SNAPTestQt::application_exit(SNAPTestQt::SUCCESS);
 }
 
 void TestWorker::sleep_ms(unsigned int msec)
@@ -365,7 +390,7 @@ void TestWorker::readScript(QString script_url, QString &script)
   if(!file.open(QIODevice::ReadOnly))
     {
     qWarning() << QString("Unable to read test script %1").arg(script_url);
-    ::exit(SNAPTestQt::NO_SUCH_TEST);
+    SNAPTestQt::application_exit(SNAPTestQt::NO_SUCH_TEST);
     }
 
   // Read the script
@@ -425,6 +450,6 @@ void TestWorker::source(QString script_url)
   if(rc.isError())
     {
     qWarning() << "JavaScript exception:" << rc.toString();
-    ::exit(SNAPTestQt::REGRESSION_TEST_FAILURE);
+    SNAPTestQt::application_exit(SNAPTestQt::EXCEPTION_CAUGHT);
     }
 }

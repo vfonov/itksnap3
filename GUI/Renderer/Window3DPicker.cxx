@@ -7,6 +7,7 @@
 #include "ImageRayIntersectionFinder.h"
 #include "Generic3DModel.h"
 #include "vtkObjectFactory.h"
+#include "ImageWrapperTraits.h"
 
 /** These classes are used internally for m_Ray intersection testing */
 class LabelImageHitTester
@@ -60,8 +61,8 @@ double Window3DPicker::IntersectWithLine(
   ImageWrapperBase *main = app->GetCurrentImageData()->GetMain();
 
   // Transform the points into voxel space
-  Vector3d x0 = main->TransformNIFTICoordinatesToVoxelIndex(Vector3d(p1));
-  Vector3d x1 = main->TransformNIFTICoordinatesToVoxelIndex(Vector3d(p2));
+  Vector3d x0 = main->TransformNIFTICoordinatesToVoxelCIndex(Vector3d(p1));
+  Vector3d x1 = main->TransformNIFTICoordinatesToVoxelCIndex(Vector3d(p2));
 
   Vector3i pos;
   int result = -1;
@@ -70,7 +71,7 @@ double Window3DPicker::IntersectWithLine(
   // Intersect with the correct wrapper
   if(app->IsSnakeModeActive() && app->GetSNAPImageData()->IsSnakeLoaded())
     {
-    typedef ImageRayIntersectionFinder<float, SnakeImageHitTester> RayCasterType;
+    typedef ImageRayIntersectionFinder<itk::Image<float, 3>, SnakeImageHitTester> RayCasterType;
     RayCasterType caster;
 
     result = caster.FindIntersection(
@@ -79,7 +80,7 @@ double Window3DPicker::IntersectWithLine(
   else
     {
     LabelImageWrapper *layer = app->GetCurrentImageData()->GetSegmentation();
-    typedef ImageRayIntersectionFinder<LabelType, LabelImageHitTester> Finder;
+    typedef ImageRayIntersectionFinder<LabelImageWrapperTraits::ImageType, LabelImageHitTester> Finder;
     Finder finder;
     LabelImageHitTester tester(app->GetColorLabelTable());
     finder.SetHitTester(tester);
@@ -114,6 +115,5 @@ Window3DPicker::Window3DPicker()
   m_Model = NULL;
 }
 
-vtkCxxRevisionMacro(Window3DPicker, "$Revision: 1.1 $")
 vtkStandardNewMacro(Window3DPicker)
 

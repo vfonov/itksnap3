@@ -10,6 +10,7 @@
 namespace itk {
   template <unsigned int VDim> class ImageBase;
   template <class TPixel, unsigned int VDim> class Image;
+  template <class TPixel, unsigned int VDim> class VectorImage;
   template <class TPixel> class RGBAPixel;
   template <class TOutputImage> class ImageSource;
   template <class TScalar, unsigned int V1, unsigned int V2> class Transform;
@@ -118,14 +119,14 @@ public:
   virtual void SetParentWrapper(ImageWrapperBase *parent) = 0;
 
   /** Get the coordinate transform for each display slice */
-  virtual const ImageCoordinateTransform &GetImageToDisplayTransform(
+  virtual const ImageCoordinateTransform *GetImageToDisplayTransform(
     unsigned int) const = 0;
 
   /**
    * Set the coordinate transformation between the display coordinates and
    * the anatomical coordinates. This affects the behavior of the slicers
    */
-  virtual void SetDisplayGeometry(IRISDisplayGeometry &dispGeom) = 0;
+  virtual void SetDisplayGeometry(const IRISDisplayGeometry &dispGeom) = 0;
 
   /** Get the display to anatomy coordinate mapping */
   virtual const IRISDisplayGeometry &GetDisplayGeometry() const = 0;
@@ -154,6 +155,15 @@ public:
    * in accordance with the transforms that are specified
    */
   virtual void SetSliceIndex(const Vector3ui &) = 0;
+
+  /**
+   * Set the viewport rectangle onto which the three display slices
+   * will be rendered
+   */
+  virtual void SetDisplayViewportGeometry(
+      unsigned int index,
+      const ImageBaseType *viewport_image) = 0;
+
 
   /** Return some image info independently of pixel type */
   irisVirtualGetMacro(ImageBase, ImageBaseType *)
@@ -200,6 +210,13 @@ public:
   irisVirtualIsMacro(Drawable)
 
   /**
+   * Whether the layer is initialized to use orthogonal slicing or non-orthogonal
+   * slicing. There are two slicing pipelines, one for the images whose slicing
+   * directions are parallel to the display planes, and one for the opposite case.
+   */
+  irisVirtualIsMacro(SlicingOrthogonal)
+
+  /**
    * Get the buffered region of the image
    */
   virtual itk::ImageRegion<3> GetBufferedRegion() const = 0;
@@ -212,13 +229,22 @@ public:
       const SNAPSegmentationROISettings &roi, itk::Command *progressCommand) const = 0;
 
   /** Transform a voxel index into a spatial position */
-  virtual Vector3d TransformVoxelIndexToPosition(const Vector3ui &iVoxel) const = 0;
+  virtual Vector3d TransformVoxelIndexToPosition(const Vector3i &iVoxel) const = 0;
+
+  /** Transform a voxel index into a spatial position */
+  virtual Vector3d TransformVoxelCIndexToPosition(const Vector3d &iVoxel) const = 0;
+
+  /** Transform spatial position to voxel continuous index (LPS) */
+  virtual Vector3d TransformPositionToVoxelCIndex(const Vector3d &vLPS) const = 0;
+
+  /** Transform spatial position to voxel index (LPS) */
+  virtual Vector3i TransformPositionToVoxelIndex(const Vector3d &vLPS) const = 0;
 
   /** Transform a voxel index into NIFTI coordinates (RAS) */
-  virtual Vector3d TransformVoxelIndexToNIFTICoordinates(const Vector3d &iVoxel) const = 0;
+  virtual Vector3d TransformVoxelCIndexToNIFTICoordinates(const Vector3d &iVoxel) const = 0;
 
   /** Transform NIFTI coordinates to a continuous voxel index */
-  virtual Vector3d TransformNIFTICoordinatesToVoxelIndex(const Vector3d &vNifti) const = 0;
+  virtual Vector3d TransformNIFTICoordinatesToVoxelCIndex(const Vector3d &vNifti) const = 0;
 
   /** Get the NIFTI s-form matrix for this image */
   irisVirtualGetMacro(NiftiSform, TransformType)
@@ -296,9 +322,6 @@ public:
   virtual void GetVoxelUnderCursorDisplayedValueAndAppearance(
       vnl_vector<double> &out_value, DisplayPixelType &out_appearance) = 0;
 
-  /** Get the voxel array, as void pointer */
-  virtual void *GetVoxelVoidPointer() const = 0;
-
   /** Clear the data associated with storing an image */
   virtual void Reset() = 0;
 
@@ -314,6 +337,12 @@ public:
    * and may involve using color labels or color maps.
    */
   virtual AbstractDisplayMappingPolicy *GetDisplayMapping() = 0;
+
+  /**
+   * Get the display mapping policy. This policy differs from wrapper to wrapper
+   * and may involve using color labels or color maps.
+   */
+  virtual const AbstractDisplayMappingPolicy *GetDisplayMapping() const = 0;
 
   // Access the filename
   irisVirtualGetStringMacro(FileName)
@@ -335,6 +364,19 @@ public:
     Export one of the slices as a thumbnail (e.g., PNG file)
     */
   virtual void WriteThumbnail(const char *filename, unsigned int maxdim) = 0;
+
+  /**
+   * Access the "IO hints" registry associated with this wrapper. The IO hints
+   * are used to help read the image when the filename alone is not sufficient.
+   * For example, it may contain the DICOM series ID of the image, or for a raw
+   * image the dimensions.
+   */
+  virtual const Registry &GetIOHints() const = 0;
+
+  /**
+   * Set the IO hints
+   */
+  virtual void SetIOHints(const Registry &io_hints) = 0;
 
   /**
    * Write the image to disk with the help of the GuidedNativeImageIO object
@@ -401,6 +443,16 @@ public:
    */
   virtual void SetITKTransform(ImageBaseType *referenceSpace, ITKTransformType *transform) = 0;
 
+  /**
+   * Get the ITK transform between this image and the reference space
+   */
+  virtual const ITKTransformType *GetITKTransform() const = 0;
+
+  /**
+   * Get the reference space space in which this image is defined
+   */
+  virtual ImageBaseType* GetReferenceSpace() const = 0;
+
 protected:
 
 };
@@ -412,8 +464,16 @@ public:
   // A common image format to which the contents of the scalar image wrapper
   // may be cast for downstream processing
   typedef itk::Image<GreyType, 3>                      CommonFormatImageType;
+
   typedef itk::Image<float, 3>                                FloatImageType;
   typedef itk::ImageSource<FloatImageType>                  FloatImageSource;
+  typedef itk::Image<double, 3>                              DoubleImageType;
+  typedef itk::ImageSource<DoubleImageType>                DoubleImageSource;
+
+  typedef itk::VectorImage<float, 3>                    FloatVectorImageType;
+  typedef itk::ImageSource<FloatVectorImageType>      FloatVectorImageSource;
+  typedef itk::VectorImage<double, 3>                  DoubleVectorImageType;
+  typedef itk::ImageSource<DoubleVectorImageType>    DoubleVectorImageSource;
 
   /**
    * An enum of export channel types. Export channels are used to present the
@@ -497,6 +557,15 @@ public:
     result in unnecessary duplication of memory.
     */
   virtual SmartPtr<FloatImageSource> CreateCastToFloatPipeline() const = 0;
+
+  /** Same as CreateCastToFloatPipeline, but for double precision */
+  virtual SmartPtr<DoubleImageSource> CreateCastToDoublePipeline() const = 0;
+
+  /** Same as CreateCastToFloatPipeline, but for vector images of single dimension */
+  virtual SmartPtr<FloatVectorImageSource> CreateCastToFloatVectorPipeline() const = 0;
+
+  /** Same as CreateCastToFloatPipeline, but for vector images of single dimension */
+  virtual SmartPtr<DoubleVectorImageSource> CreateCastToDoubleVectorPipeline() const = 0;
 
   /**
    * Get the intensity curve used to map raw intensities to color map inputs.

@@ -14,13 +14,13 @@
 =========================================================================*/
 
 #include "VectorImageWrapper.h"
-#include "itkImageRegionIterator.h"
+#include "RLEImageRegionIterator.h"
 #include "itkImageSliceConstIteratorWithIndex.h"
 #include "itkNumericTraits.h"
 #include "itkRegionOfInterestImageFilter.h"
 #include "itkRescaleIntensityImageFilter.h"
 #include "itkIdentityTransform.h"
-#include "IRISSlicer.h"
+#include "AdaptiveSlicingPipeline.h"
 #include "SNAPSegmentationROISettings.h"
 #include "itkCommand.h"
 #include "ImageWrapperTraits.h"
@@ -97,27 +97,18 @@ VectorImageWrapper<TTraits,TBase>
 {
   // Get the numerical value
   MultiChannelDisplayMode mode = this->m_DisplayMapping->GetDisplayMode();
-  if(mode.UseRGB)
+  if(mode.UseRGB || mode.RenderAsGrid)
     {
-    // Make sure the display slice is updated
-    this->GetDisplaySlice(0)->Update();
+    // Look up the actual intensity of the voxel from the slicer
+    PixelType pixel_value = this->m_Slicer[0]->LookupIntensityAtSliceIndex(this->m_ReferenceSpace);
 
-    // Find the correct voxel in the space of the first display slice
-    Vector3ui idxDisp =
-        this->GetImageToDisplayTransform(0).TransformVoxelIndex(this->GetSliceIndex());
-
-    // Get the RGB value
-    typename DisplaySliceType::IndexType idx2D = {{idxDisp[0], idxDisp[1]}};
-    out_appearance = this->GetDisplaySlice(0)->GetPixel(idx2D);
-
-    // Get the value vector in native range
+    // Set the output value
     out_value.set_size(this->GetNumberOfComponents());
     for(int i = 0; i < this->GetNumberOfComponents(); i++)
-      {
-      InternalPixelType p =
-          this->GetComponentWrapper(i)->GetSlicer(0)->GetOutput()->GetPixel(idx2D);
-      out_value[i] = this->m_NativeMapping(p);
-      }
+      out_value[i] = this->m_NativeMapping(pixel_value[i]);
+
+    // Use the display mapping to map to display pixel
+    out_appearance = this->m_DisplayMapping->MapPixel(pixel_value);
     }
   else
     {
@@ -210,6 +201,10 @@ VectorImageWrapper<TTraits,TBase>
   // Assign a parent wrapper to the derived wrapper
   wrapper->SetParentWrapper(this);
 
+  // Pass the display geometry to the component wrapper
+  for(int k = 0; k < 3; k++)
+    wrapper->SetDisplayViewportGeometry(k, this->GetDisplayViewportGeometry(k));
+
   SmartPtr<ScalarImageWrapperBase> ptrout = wrapper.GetPointer();
 
   // When creating derived wrappers, we need to rebroadcast the events from
@@ -241,6 +236,12 @@ VectorImageWrapper<TTraits,TBase>
 
     // Create a wrapper for this image and assign the component image
     SmartPtr<ComponentWrapperType> cw = ComponentWrapperType::New();
+
+    // Pass the display geometry to the component wrapper
+    for(int k = 0; k < 3; k++)
+      cw->SetDisplayViewportGeometry(k, this->GetDisplayViewportGeometry(k));
+
+    // Initialize referencing the current wrapper
     cw->InitializeToWrapper(this, comp, referenceSpace, transform);
 
     // Assign a parent wrapper to the derived wrapper
@@ -312,6 +313,19 @@ VectorImageWrapper<TTraits,TBase>
   Superclass::UpdateImagePointer(newImage, referenceSpace, transform);
 
 }
+
+template<class TTraits, class TBase>
+void
+VectorImageWrapper<TTraits,TBase>
+::SetITKTransform(ImageBaseType *referenceSpace, ITKTransformType *transform)
+{
+  Superclass::SetITKTransform(referenceSpace, transform);
+  for(ScalarRepIterator it = m_ScalarReps.begin(); it != m_ScalarReps.end(); ++it)
+    {
+    it->second->SetITKTransform(referenceSpace, transform);
+    }
+}
+
 
 template <class TTraits, class TBase>
 inline ScalarImageWrapperBase *
@@ -407,7 +421,23 @@ VectorImageWrapper<TTraits,TBase>
 template <class TTraits, class TBase>
 void
 VectorImageWrapper<TTraits,TBase>
-::SetDisplayGeometry(IRISDisplayGeometry &dispGeom)
+::SetDisplayViewportGeometry(
+    unsigned int index,
+    ImageBaseType *viewport_image)
+{
+  Superclass::SetDisplayViewportGeometry(index, viewport_image);
+
+  // Propagate to owned scalar wrappers
+  for(ScalarRepIterator it = m_ScalarReps.begin(); it != m_ScalarReps.end(); ++it)
+    {
+    it->second->SetDisplayViewportGeometry(index, viewport_image);
+    }
+}
+
+template <class TTraits, class TBase>
+void
+VectorImageWrapper<TTraits,TBase>
+::SetDisplayGeometry(const IRISDisplayGeometry &dispGeom)
 {
   Superclass::SetDisplayGeometry(dispGeom);
   for(ScalarRepIterator it = m_ScalarReps.begin(); it != m_ScalarReps.end(); ++it)

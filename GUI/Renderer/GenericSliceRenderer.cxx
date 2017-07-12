@@ -44,18 +44,13 @@ GenericSliceRenderer
 {
   this->m_DrawingZoomThumbnail = false;
   this->m_DrawingLayerThumbnail = false;
+  this->m_DrawingViewportIndex = -1;
 }
 
 void
 GenericSliceRenderer::SetModel(GenericSliceModel *model)
 {
   this->m_Model = model;
-
-  // Build the texture map
-  OpenGLTextureAssociationFactory texFactoryDelegate = { this };
-  m_Texture.SetDelegate(texFactoryDelegate);
-  m_Texture.SetSource(model->GetDriver());
-  this->UpdateTextureMap();
 
   // Record and rebroadcast changes in the model
   Rebroadcast(m_Model, ModelUpdateEvent(), ModelUpdateEvent());
@@ -106,12 +101,6 @@ void GenericSliceRenderer::OnUpdate()
 
   // Also make sure to update the display layout model
   m_Model->GetParentUI()->GetDisplayLayoutModel()->Update();
-
-  // Only update the texture map in response to "big" events
-  if(m_EventBucket->HasEvent(ModelUpdateEvent(), m_Model))
-    {
-    this->UpdateTextureMap();
-    }
 }
 
 void
@@ -166,6 +155,7 @@ GenericSliceRenderer
       glMatrixMode(GL_MODELVIEW);
       glPushMatrix();
       glLoadIdentity();
+
       glPushMatrix();
 
       // First set of transforms
@@ -192,10 +182,13 @@ GenericSliceRenderer
 
       // Draw the main layers for this row/column combination
       ImageWrapperBase *layer = id->FindLayer(vp.layer_id, false);
-      if(layer && this->DrawImageLayers(layer, !vp.isThumbnail))
+      if(layer && this->DrawImageLayers(layer, vp))
         {
         // Set the thumbnail flag
         m_DrawingLayerThumbnail = vp.isThumbnail;
+
+        // Set the current vp index
+        m_DrawingViewportIndex = k;
 
         // We don't want to draw segmentation over the speed image and other
         // SNAP-mode layers.
@@ -302,8 +295,9 @@ GenericSliceRenderer
         }
       }
 
-    // No longer drawing thumbnails
+    // No longer drawing thumbnails or viewports
     m_DrawingLayerThumbnail = false;
+    m_DrawingViewportIndex = -1;
 
     // Set the viewport and projection to original dimensions
     glViewport(0, 0, vp_full[0], vp_full[1]);
@@ -343,6 +337,17 @@ GenericSliceRenderer
   glFlush();
 }
 
+const GenericSliceRenderer::ViewportType *
+GenericSliceRenderer
+::GetDrawingViewport() const
+{
+  if(m_DrawingViewportIndex < 0)
+    return NULL;
+  else
+    return &m_Model->GetViewportLayout().vpList[m_DrawingViewportIndex];
+
+}
+
 void
 GenericSliceRenderer
 ::resizeGL(int w, int h, int device_pixel_ratio)
@@ -358,7 +363,7 @@ GenericSliceRenderer
   glLoadIdentity();
 }
 
-bool GenericSliceRenderer::DrawImageLayers(ImageWrapperBase *base_layer, bool drawStickies)
+bool GenericSliceRenderer::DrawImageLayers(ImageWrapperBase *base_layer, const ViewportType &vp)
 {
   // Get the image data
   GenericImageData *id = m_Model->GetImageData();
@@ -366,7 +371,7 @@ bool GenericSliceRenderer::DrawImageLayers(ImageWrapperBase *base_layer, bool dr
   // If drawing the thumbnail, only draw the main layer
   if(m_DrawingZoomThumbnail)
     {
-    DrawTextureForLayer(base_layer, false);
+    DrawTextureForLayer(base_layer, vp, false);
     return true;
     }
 
@@ -374,10 +379,10 @@ bool GenericSliceRenderer::DrawImageLayers(ImageWrapperBase *base_layer, bool dr
   if(!this->IsTiledMode())
     {
     // Draw the base layer without transparency
-    DrawTextureForLayer(base_layer, false);
+    DrawTextureForLayer(base_layer, vp, false);
 
     // Now draw all the sticky layers on top
-    if(drawStickies)
+    if(!vp.isThumbnail)
       {
         for(LayerIterator it(id); !it.IsAtEnd(); ++it)
         {
@@ -387,7 +392,7 @@ bool GenericSliceRenderer::DrawImageLayers(ImageWrapperBase *base_layer, bool dr
            && layer->IsSticky()
            && layer->GetAlpha() > 0)
           {
-          DrawTextureForLayer(layer, true);
+          DrawTextureForLayer(layer, vp, true);
           }
         }
       }
@@ -397,10 +402,10 @@ bool GenericSliceRenderer::DrawImageLayers(ImageWrapperBase *base_layer, bool dr
   else
     {
     // Draw the particular layer
-    DrawTextureForLayer(base_layer, false);
+    DrawTextureForLayer(base_layer, vp, false);
 
     // Now draw all the non-sticky layers
-    if(drawStickies)
+    if(!vp.isThumbnail)
       {
       for(LayerIterator itov(id); !itov.IsAtEnd(); ++itov)
         {
@@ -409,7 +414,7 @@ bool GenericSliceRenderer::DrawImageLayers(ImageWrapperBase *base_layer, bool dr
            && itov.GetLayer()->IsDrawable()
            && itov.GetLayer()->GetAlpha() > 0)
           {
-          DrawTextureForLayer(itov.GetLayer(), true);
+          DrawTextureForLayer(itov.GetLayer(), vp, true);
           }
         }
       }
@@ -427,28 +432,124 @@ bool GenericSliceRenderer::IsTiledMode() const
 
 
 
-
-
-
-void GenericSliceRenderer::DrawMainTexture()
+GenericSliceRenderer::Texture *
+GenericSliceRenderer
+::GetTextureForLayer(ImageWrapperBase *layer)
 {
-  // Get the image data
-  GenericImageData *id = m_Model->GetImageData();
+  const char *user_data_ids[] = {
+    "OpenGLTexture[0]",
+    "OpenGLTexture[1]",
+    "OpenGLTexture[2]"
+  };
+  const char *user_data_id = user_data_ids[m_Model->GetId()];
 
-  // Draw the main texture
-  if (id->IsMainLoaded())
-    DrawTextureForLayer(id->GetMain(), false);
+  // If layer uninitialized, return NULL
+  if(!layer->IsInitialized())
+    return NULL;
 
-  // Draw each of the overlays
-  if (!m_DrawingZoomThumbnail)
+  // Retrieve the texture
+  SmartPtr<Texture> tex = static_cast<Texture *>(layer->GetUserData(user_data_id));
+
+  // Get the image that should be associated with the texture
+  Texture::ImageType *slice = layer->GetDisplaySlice(m_Model->GetId()).GetPointer();
+
+  // If the texture does not exist - or if the image has changed for some reason, update it
+  if(!tex || tex->GetImage() != slice)
     {
-    for(LayerIterator it(id, OVERLAY_ROLE); !it.IsAtEnd(); ++it)
-      DrawTextureForLayer(it.GetLayer(), true);
+    tex = Texture::New();
+    tex->SetDepth(4, GL_RGBA);
+    tex->SetImage(slice);
+
+    layer->SetUserData(user_data_id, tex.GetPointer());
+    }
+
+  // Configure the texture parameters
+  const GlobalDisplaySettings *gds = m_Model->GetParentUI()->GetGlobalDisplaySettings();
+  GLint imode =
+      (gds->GetGreyInterpolationMode() == GlobalDisplaySettings::LINEAR)
+      ? GL_LINEAR : GL_NEAREST;
+  tex->SetInterpolation(imode);
+
+  // Set the mip-mapping behaviour depending on whether the image wrapper is rendering
+  // in image space or in display space
+  tex->SetMipMapping(layer->IsSlicingOrthogonal());
+
+  return tex;
+}
+
+#include <itkImageLinearConstIteratorWithIndex.h>
+
+Vector3d GenericSliceRenderer::ComputeGridPosition(
+    const Vector3d &disp_pix,
+    const itk::Index<2> &slice_index,
+    ImageWrapperBase *vecimg)
+{
+  // The pixel must be mapped to native
+  Vector3d disp;
+  disp[0] = vecimg->GetNativeIntensityMapping()->MapInternalToNative(disp_pix[0]);
+  disp[1] = vecimg->GetNativeIntensityMapping()->MapInternalToNative(disp_pix[1]);
+  disp[2] = vecimg->GetNativeIntensityMapping()->MapInternalToNative(disp_pix[2]);
+
+  // This is the physical coordinate of the current pixel - in LPS
+  Vector3d xPhys;
+  if(vecimg->IsSlicingOrthogonal())
+    {
+    // The pixel gives the displacement in LPS coordinates (by ANTS/Greedy convention)
+    // We need to map it back into the slice domain. First, we need to know the 3D index
+    // of the current pixel in the image space
+    Vector3d xSlice;
+    xSlice[0] = slice_index[0] + 0.5;
+    xSlice[1] = slice_index[1] + 0.5;
+    xSlice[2] = m_Model->GetSliceIndex();
+
+    // For orthogonal slicing, the input coordinates are in units of image voxels
+    xPhys = m_Model->MapSliceToImagePhysical(xSlice);
+    }
+  else
+    {
+    // Otherwise, the slice coordinates are relative to the rendered slice
+    GenericImageData *gid = m_Model->GetImageData();
+    GenericImageData::ImageBaseType *dispimg =
+        gid->GetDisplayViewportGeometry(m_Model->GetId());
+
+    // Use that image to transform coordinates
+    itk::Point<double, 3> pPhys;
+    itk::Index<3> index;
+    index[0] = slice_index[0]; index[1] = slice_index[1]; index[2] = 0;
+    dispimg->TransformIndexToPhysicalPoint(index, pPhys);
+    xPhys = pPhys;
+    }
+
+  // Add displacement and map back to slice space
+  itk::ContinuousIndex<double, 3> cix;
+  itk::Point<double, 3> pt = to_itkPoint(xPhys + disp);
+
+  m_Model->GetDriver()->GetCurrentImageData()->GetMain()->GetImageBase()
+      ->TransformPhysicalPointToContinuousIndex(pt, cix);
+
+  // The displaced location in slice coordinates
+  Vector3d disp_slice = m_Model->MapImageToSlice(Vector3d(cix));
+
+  // What we return also depends on whether slicing is ortho or not. For ortho
+  // slicing, the renderer is configured in the "Slice" coordinate system (1 unit =
+  // 1 image voxel) while for oblique slicing, the renderer uses the window coordinate
+  // system (1 unit = 1 screen pixel). Whatever we return needs to be in those units.
+  if(vecimg->IsSlicingOrthogonal())
+    {
+    return disp_slice;
+    }
+  else
+    {
+    Vector3d win3d;
+    Vector2d win2d = m_Model->MapSliceToWindow(disp_slice);
+    win3d[0] = win2d[0]; win3d[1] = win2d[1]; win3d[2] = disp_slice[2];
+    return win3d;
     }
 }
 
+
 void GenericSliceRenderer::DrawTextureForLayer(
-    ImageWrapperBase *layer, bool use_transparency)
+    ImageWrapperBase *layer, const ViewportType &vp, bool use_transparency)
 {
   // Get the appearance settings pointer since we use it a lot
   SNAPAppearanceSettings *as =
@@ -464,7 +565,26 @@ void GenericSliceRenderer::DrawTextureForLayer(
       ? GL_LINEAR : GL_NEAREST;
 
   // Get the texture
-  Texture *tex = m_Texture[layer];
+  Texture *tex = this->GetTextureForLayer(layer);
+
+  // Set up the drawing mode
+  glPushMatrix();
+
+  // If a layer is sliced orthogonally, it's sliced in its native voxel space
+  // and we rely on OpenGL for scaling into display space
+  // Otherwise there is a 1:1 mapping from slice pixels to display pixels
+  if(!layer->IsSlicingOrthogonal())
+    {
+    glLoadIdentity();
+    if(vp.isThumbnail)
+      {
+      double scale_x = vp.size[0] * 1.0 / m_Model->GetCanvasSize()[0];
+      double scale_y = vp.size[1] * 1.0 / m_Model->GetCanvasSize()[1];
+      double zoom = std::max(scale_x, scale_y);
+      glScalef(zoom, zoom, 0);
+      }
+
+    }
 
   // Paint the texture with alpha
   if(tex)
@@ -482,6 +602,131 @@ void GenericSliceRenderer::DrawTextureForLayer(
       tex->Draw(clrBackground);
       }
     }
+
+  // TODO: move this somewhere
+  AbstractMultiChannelDisplayMappingPolicy *dp = dynamic_cast<
+      AbstractMultiChannelDisplayMappingPolicy *>(layer->GetDisplayMapping());
+  if(dp && dp->GetDisplayMode().RenderAsGrid
+     && !this->IsDrawingZoomThumbnail() && !this->IsDrawingLayerThumbnail())
+    {
+    // Draw the texture for the layer
+    AnatomicImageWrapper *vecimg = dynamic_cast<AnatomicImageWrapper *>(layer);
+    if(vecimg && vecimg->GetNumberOfComponents() == 3)
+      {
+      // Get the slice
+      AnatomicImageWrapper::SliceType::Pointer slice = vecimg->GetSlice(m_Model->GetId());
+      slice->GetSource()->UpdateLargestPossibleRegion();
+
+      // Appearance settings for grid lines
+      SNAPAppearanceSettings *as = m_Model->GetParentUI()->GetAppearanceSettings();
+      const OpenGLAppearanceElement *elt =
+          as->GetUIElement(SNAPAppearanceSettings::GRID_LINES);
+
+      // Line properties
+      glPushAttrib(GL_LINE_BIT | GL_COLOR_BUFFER_BIT);
+
+      elt->ApplyLineSettings();
+
+
+      // The mapping between (index, phi[index]) and on-screen coordinate for a grid
+      // point is linear (combines a bunch of transforms). To save time, we can
+      // compute this mapping once at the beginning of the loop. We also know that the
+      // index will only be going up by one at each iteration
+      itk::Index<2> ind;
+      Vector3d phi, G0, d_grid_d_phi[3], d_grid_d_ind[2];
+
+      // Compute the initial displacement G0
+      ind.Fill(0); phi.fill(0.0f);
+      G0 = ComputeGridPosition(phi, ind, vecimg);
+
+      // Compute derivative of grid displacement wrt warp components
+      for(int a = 0; a < 3; a++)
+        {
+        ind.Fill(0); phi.fill(0.0f);
+        phi[a] = 1.0f;
+        d_grid_d_phi[a] = ComputeGridPosition(phi, ind, vecimg) - G0;
+        }
+
+      // Compute derivative of grid displacement wrt index components
+      for(int b = 0; b < 2; b++)
+        {
+        ind.Fill(0); phi.fill(0.0f);
+        ind[b] = 1;
+        d_grid_d_ind[b] = ComputeGridPosition(phi, ind, vecimg) - G0;
+        }
+
+      // Iterate line direction
+      for(int d = 0; d < 2; d++)
+        {
+
+        // The current matrix is such that we should be drawing in pixel coordinates.
+        typedef itk::ImageLinearConstIteratorWithIndex<AnatomicImageWrapper::SliceType> IterType;
+        IterType it1(slice, slice->GetBufferedRegion());
+        it1.SetDirection(d);
+        it1.GoToBegin();
+
+        int vox_increment;
+        if(vecimg->IsSlicingOrthogonal())
+          {
+          // Figure out how frequently to sample lines. The spacing on the screen should be at
+          // most every 4 pixels. Zoom is in units of px/mm. Spacing is in units of mm/vox, so
+          // zoom * spacing is (display pixels) / (image voxels).
+          double disp_pix_per_vox = m_Model->GetSliceSpacing()[d] * m_Model->GetViewZoom();
+          vox_increment = (int) ceil(8.0 / disp_pix_per_vox);
+          }
+        else
+          {
+          // The slice is in screen pixel units already - so just 8!
+          vox_increment = 8;
+          }
+
+        while( !it1.IsAtEnd() )
+          {
+          // Do we draw this line?
+          if(it1.GetIndex()[1-d] % vox_increment == 0)
+            {
+            glColor3d(elt->GetNormalColor()[0], elt->GetNormalColor()[1], elt->GetNormalColor()[2]);
+            glBegin(GL_LINE_STRIP);
+
+            // Set up the current position and increment
+            Vector3d G1 = G0 +
+                (d_grid_d_ind[0] * (double) (it1.GetIndex()[0])) +
+                (d_grid_d_ind[1] * (double) (it1.GetIndex()[1]));
+
+            while( !it1.IsAtEndOfLine() )
+              {
+              // Read the pixel
+              AnatomicImageWrapper::SliceType::PixelType pix = it1.Get();
+
+              // Alternative version
+              Vector3d xDispSlice = G1 +
+                  (d_grid_d_phi[0] * (double) (pix[0])) +
+                  (d_grid_d_phi[1] * (double) (pix[1])) +
+                  (d_grid_d_phi[2] * (double) (pix[2]));
+
+              glVertex2d(xDispSlice[0], xDispSlice[1]);
+
+              // Add the displacement
+              ++it1;
+
+              // Update the current position
+              G1 += d_grid_d_ind[d];
+              }
+
+            glEnd();
+            }
+
+          it1.NextLine();
+          }
+
+        }
+
+      glPopAttrib();
+      }
+    }
+
+  // Pop the matrix
+  glPopMatrix();
 }
 
 
@@ -492,7 +737,7 @@ void GenericSliceRenderer::DrawSegmentationTexture()
 
   if (id->IsSegmentationLoaded() && alpha > 0)
     {
-    Texture *texture = m_Texture[id->GetSegmentation()];
+    Texture *texture = this->GetTextureForLayer(id->GetSegmentation());
     texture->DrawTransparent(alpha);
     }
   }
@@ -525,7 +770,11 @@ void GenericSliceRenderer::DrawThumbnail()
   glScalef(m_Model->GetSliceSpacing()[0],m_Model->GetSliceSpacing()[1],1.0);
 
   // Draw the Main image (the background will be picked automatically)
-  DrawMainTexture();
+  if (m_Model->GetImageData()->IsMainLoaded())
+    {
+    ViewportType vp = m_Model->GetViewportLayout().vpList.front();
+    DrawTextureForLayer(m_Model->GetImageData()->GetMain(), vp, false);
+    }
 
   // Draw the overlays that are shown on the thumbnail
   DrawTiledOverlays();
@@ -568,69 +817,6 @@ void GenericSliceRenderer::DrawThumbnail()
   m_DrawingZoomThumbnail = false;
   }
 
-GenericSliceRenderer::Texture *
-GenericSliceRenderer::CreateTexture(ImageWrapperBase *iw)
-{
-  if(iw->IsInitialized())
-    {
-    Texture *texture = new Texture(4, GL_RGBA);
-    texture->SetImage(iw->GetDisplaySlice(m_Model->GetId()).GetPointer());
-
-    const GlobalDisplaySettings *gds = m_Model->GetParentUI()->GetGlobalDisplaySettings();
-
-    GLint imode =
-        (gds->GetGreyInterpolationMode() == GlobalDisplaySettings::LINEAR)
-        ? GL_LINEAR : GL_NEAREST;
-
-    texture->SetInterpolation(imode);
-    return texture;
-    }
-  else return NULL;
-}
-
-/*
-void GenericSliceRenderer::AssociateTexture(
-  ImageWrapperBase *iw, TextureMap &src, TextureMap &trg)
-{
-  if(iw->IsInitialized())
-    {
-    TextureMap::iterator it = src.find(iw);
-    Texture *texture;
-
-    if (it != src.end())
-      {
-      texture = it->second;
-      itk::ImageBase<2> *b1 = iw->GetDisplaySlice(m_Model->GetId()).GetPointer();
-      const itk::ImageBase<2> *b2 = texture->GetImage();
-      std::cout << "TEX1 " << b1 << "   TEX2" << b2 << std::endl;
-      src.erase(it);
-      }
-    else
-      {
-      texture = new Texture(4, GL_RGBA);
-      texture->SetImage(iw->GetDisplaySlice(m_Model->GetId()).GetPointer());
-      }
-
-    // Set the interpolation approach
-    SNAPAppearanceSettings *as = m_Model->GetParentUI()->GetAppearanceSettings();
-    GLint imode = as->GetGreyInterpolationMode() == SNAPAppearanceSettings::LINEAR
-        ? GL_LINEAR : GL_NEAREST;
-    texture->SetInterpolation(imode);
-
-    // Store the texture association
-    trg[iw] = texture;
-    }
-}
-
-*/
-
-void GenericSliceRenderer::UpdateTextureMap()
-{
-  if(m_Model->IsSliceInitialized())
-    {
-    m_Texture.Update();
-    }
-}
 
 void GenericSliceRenderer::initializeGL()
 {
@@ -657,17 +843,4 @@ void GenericSliceRenderer::DrawGlobalOverlays()
     (*it)->paintGL();
     }
 }
-
-OpenGLTextureAssociationFactory::Texture *
-OpenGLTextureAssociationFactory
-::New(ImageWrapperBase *layer)
-{
-  return m_Renderer->CreateTexture(layer);
-}
-
-
-template class LayerAssociation<GenericSliceRenderer::Texture,
-                                ImageWrapperBase,
-                                OpenGLTextureAssociationFactory>;
-
 

@@ -36,19 +36,23 @@
 #define __ImageWrapper_h_
 
 // Smart pointers have to be included from ITK, can't forward reference them
+#include "RLEImageScanlineIterator.h"
 #include "ImageWrapperBase.h"
 #include "ImageCoordinateGeometry.h"
-#include <itkImageRegionIterator.h>
 #include <itkVectorImage.h>
 #include <itkRGBAPixel.h>
 #include <DisplayMappingPolicy.h>
 #include <itkSimpleDataObjectDecorator.h>
 
 // Forward declarations to IRIS classes
-template <class TInputImage, class TOutputImage> class IRISSlicer;
 template <class TFunctor> class UnaryValueToValueFilter;
 
+template <class TInputImage, class TOutputImage, class TTraits>
+class AdaptiveSlicingPipeline;
+
+
 class SNAPSegmentationROISettings;
+
 namespace itk {
   template <unsigned int VDimension> class ImageBase;
   template <class TImage> class ImageSource;
@@ -57,6 +61,8 @@ namespace itk {
            typename TOutputImage,
            typename TInterpolatorPrecisionType,
            typename TTransformPrecisionType> class ResampleImageFilter;
+  template<typename TInputImage,
+           typename TOutputImage> class ExtractImageFilter;
 }
 
 #include <itkImageSource.h>
@@ -100,8 +106,13 @@ public:
   // adaptor, the component type is the output type of the adaptor
   typedef typename TTraits::ComponentType                        ComponentType;
 
+  // This is the type of the intermediate 'preview' images used in the slicing
+  // pipeline. For regular image and vector image wrappers, this is the same as
+  // ImageType, but for adapter-based image wrappers, this is a concrete image
+  typedef itk::Image<PixelType, 3>                            PreviewImageType;
+
   // Slice image type
-  typedef itk::Image<PixelType,2>                                    SliceType;
+  typedef typename TTraits::SliceType                                SliceType;
   typedef SmartPtr<SliceType>                                     SlicePointer;
 
   // Display slice type - inherited
@@ -110,11 +121,11 @@ public:
   typedef typename Superclass::DisplaySlicePointer         DisplaySlicePointer;
 
   // Slicer type
-  typedef IRISSlicer<ImageType, SliceType>                          SlicerType;
+  typedef AdaptiveSlicingPipeline<ImageType, SliceType, PreviewImageType> SlicerType;
   typedef SmartPtr<SlicerType>                                   SlicerPointer;
 
   // Preview source for preview pipelines
-  typedef itk::ImageSource<ImageType>                        PreviewFilterType;
+  typedef itk::ImageSource<PreviewImageType>                 PreviewFilterType;
 
   // Iterator types
   typedef typename itk::ImageRegionIterator<ImageType>                Iterator;
@@ -170,19 +181,24 @@ public:
   irisGetMacro(UniqueId, unsigned long)
 
   /**
+    Does this wrapper use the non-orthogonal slicing pipeline?
+    */
+  virtual bool IsSlicingOrthogonal() const;
+
+  /**
    * Clear the data associated with storing an image
    */
   virtual void Reset();
 
   /** Get the coordinate transform for each display slice */
-  virtual const ImageCoordinateTransform &GetImageToDisplayTransform(
+  virtual const ImageCoordinateTransform *GetImageToDisplayTransform(
     unsigned int) const;
 
   /**
    * Set the coordinate transformation between the display coordinates and
    * the anatomical coordinates. This affects the behavior of the slicers
    */
-  virtual void SetDisplayGeometry(IRISDisplayGeometry &dispGeom);
+  virtual void SetDisplayGeometry(const IRISDisplayGeometry &dispGeom);
 
   /** Get the display to anatomy coordinate mapping */
   irisGetMacro(DisplayGeometry, const IRISDisplayGeometry &)
@@ -202,7 +218,7 @@ public:
   irisGetMacro(ImageGeometry, const ImageCoordinateGeometry &)
 
 
-  /** Get the current slice index */
+  /** Get the current slice index - which really means cursor position */
   irisGetMacro(SliceIndex, Vector3ui)
 
   /** Return some image info independently of pixel type */
@@ -244,13 +260,22 @@ public:
   virtual itk::ImageRegion<3> GetBufferedRegion() const;
 
   /** Transform a voxel index into a spatial position */
-  virtual Vector3d TransformVoxelIndexToPosition(const Vector3ui &iVoxel) const;
+  virtual Vector3d TransformVoxelIndexToPosition(const Vector3i &iVoxel) const ;
+
+  /** Transform a voxel index into a spatial position */
+  virtual Vector3d TransformVoxelCIndexToPosition(const Vector3d &iVoxel) const;
+
+  /** Transform spatial position to voxel continuous index (LPS) */
+  virtual Vector3d TransformPositionToVoxelCIndex(const Vector3d &vLPS) const;
+
+  /** Transform spatial position to voxel index (LPS) */
+  virtual Vector3i TransformPositionToVoxelIndex(const Vector3d &vLPS) const;
 
   /** Transform a voxel index into NIFTI coordinates (RAS) */
-  virtual Vector3d TransformVoxelIndexToNIFTICoordinates(const Vector3d &iVoxel) const;
+  virtual Vector3d TransformVoxelCIndexToNIFTICoordinates(const Vector3d &iVoxel) const;
 
   /** Transform NIFTI coordinates to a continuous voxel index */
-  virtual Vector3d TransformNIFTICoordinatesToVoxelIndex(const Vector3d &vNifti) const;
+  virtual Vector3d TransformNIFTICoordinatesToVoxelCIndex(const Vector3d &vNifti) const;
 
   /** Get the NIFTI s-form matrix for this image */
   irisGetMacro(NiftiSform, TransformType)
@@ -289,7 +314,11 @@ public:
   DisplayMapping *GetDisplayMapping()
     { return m_DisplayMapping; }
 
-  /** 
+  /** Get the intensity to display mapping */
+  const DisplayMapping *GetDisplayMapping() const
+    { return m_DisplayMapping; }
+
+  /**
    * Return the pointed to the ITK image encapsulated by this wrapper.
    */
   virtual ImageType *GetImage() const
@@ -307,6 +336,12 @@ public:
    * in accordance with the transforms that are specified
    */
   virtual void SetSliceIndex(const Vector3ui &cursor);
+
+  const ImageBaseType* GetDisplayViewportGeometry(unsigned int index) const;
+
+  virtual void SetDisplayViewportGeometry(
+      unsigned int index,
+      const ImageBaseType *viewport_image);
 
   /**
    * Get an ITK pipeline object holding the minimum value in the image. For
@@ -335,7 +370,7 @@ public:
   /**
    * This method exposes the scalar pointer in the image
    */
-  virtual InternalPixelType *GetVoxelPointer() const;
+  //virtual InternalPixelType *GetVoxelPointer() const;
 
   /** Number of voxels */
   virtual size_t GetNumberOfVoxels() const;
@@ -362,6 +397,16 @@ public:
    * main reference space
    */
   virtual void SetITKTransform(ImageBaseType *referenceSpace, ITKTransformType *transform);
+
+  /**
+   * Get the ITK transform between this layer and its reference space
+   */
+  virtual const ITKTransformType *GetITKTransform() const;
+
+  /**
+   * Get the reference space space in which this image is defined
+   */
+  virtual ImageBaseType* GetReferenceSpace() const;
 
   /**
    * Extract a region of interest from the image wrapper, as a new wrapper of
@@ -438,9 +483,6 @@ public:
   irisIsMacro(PipelineReady)
   irisSetMacro(PipelineReady, bool)
 
-
-  virtual void* GetVoxelVoidPointer() const;
-
   /**
    * Set the filename of the image wrapper. If the wrapper does not have a
    * nickname, the nickname will be changed to the file part of the filename.
@@ -470,6 +512,18 @@ public:
   virtual void SetCustomNickname(const std::string &nickname);
   irisGetMacro(CustomNickname, const std::string &);
 
+  /**
+   * Access the "IO hints" registry associated with this wrapper. The IO hints
+   * are used to help read the image when the filename alone is not sufficient.
+   * For example, it may contain the DICOM series ID of the image, or for a raw
+   * image the dimensions.
+   */
+  virtual const Registry &GetIOHints() const;
+
+  /**
+   * Set the IO hints
+   */
+  virtual void SetIOHints(const Registry &io_hints);
 
   /**
    * Write the image to disk with the help of the GuidedNativeImageIO object
@@ -609,6 +663,8 @@ protected:
   typedef std::map<std::string, SmartPtr<itk::Object> > UserDataMapType;
   UserDataMapType m_UserDataMap;
 
+  // IO Hints registry
+  Registry *m_IOHints;
 
   /**
    * Handle a change in the image pointer (i.e., a load operation on the image or 
@@ -640,9 +696,25 @@ protected:
   /** Parent wrapper */
   ImageWrapperBase *m_ParentWrapper;
 
+  /**
+   * Resampling filter data type. These filters are used when slicing is required in
+   * non-orthogonal directions. There are four of these filters, and they are used to
+   * produce three display slices and also a complete image that matches the dimensions
+   * of the main image (this is for feature extraction, etc.)
+   */
+  typedef itk::ResampleImageFilter<ImageType, PreviewImageType, double, double> ResampleFilter;
+  SmartPtr<ResampleFilter> m_ResampleFilter[6];
 
-  typedef itk::ResampleImageFilter<ImageType, ImageType, double, double> ResampleFilter;
-  SmartPtr<ResampleFilter> m_ResampleFilter[3];
+  // Compare the geometry (size and header) of two images. Returns true if the headers are
+  // within tolerance of each other.
+  static bool CompareGeometry(ImageBaseType *image1, ImageBaseType *image2, double tol = 0.0);
+
+  // Check if the orthogonal slicer can be used for the given image, ref space and transform
+  static bool CanOrthogonalSlicingBeUsed(
+      ImageType *image, ImageBaseType *referenceSpace, ITKTransformType *transform);
+
+  // Update the orthogonal and/or non-orthogonal slicing pipelines
+  void UpdateSlicingPipelines(ImageType *image, ImageBaseType *referenceSpace, ITKTransformType *transform);
 };
 
 #endif // __ImageWrapper_h_

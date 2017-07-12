@@ -71,6 +71,17 @@ ColorLabelTableDisplayMappingPolicy<TWrapperTraits>
 }
 
 template<class TWrapperTraits>
+typename ColorLabelTableDisplayMappingPolicy<TWrapperTraits>::DisplayPixelType
+ColorLabelTableDisplayMappingPolicy<TWrapperTraits>
+::MapPixel(const InputPixelType &val)
+{
+  DisplayPixelType pix;
+  ColorLabelTable *table = this->m_RGBAFilter[0]->GetColorTable();
+  table->GetColorLabel(val).GetRGBAVector(pix.GetDataPointer());
+  return pix;
+}
+
+template<class TWrapperTraits>
 void
 ColorLabelTableDisplayMappingPolicy<TWrapperTraits>
 ::SetLabelColorTable(ColorLabelTable *labels)
@@ -311,7 +322,14 @@ CachingCurveAndColorMapDisplayMappingPolicy<TWrapperTraits>
 }
 
 
-
+template<class TWrapperTraits>
+typename CachingCurveAndColorMapDisplayMappingPolicy<TWrapperTraits>::DisplayPixelType
+CachingCurveAndColorMapDisplayMappingPolicy<TWrapperTraits>
+::MapPixel(const PixelType &val)
+{
+  DisplayPixelType pix = m_IntensityFilter[0]->MapPixel(val);
+  return pix;
+}
 
 
 
@@ -492,6 +510,14 @@ LinearColorMapDisplayMappingPolicy<TWrapperTraits>
 
 
 
+template<class TWrapperTraits>
+typename LinearColorMapDisplayMappingPolicy<TWrapperTraits>::DisplayPixelType
+LinearColorMapDisplayMappingPolicy<TWrapperTraits>
+::MapPixel(const PixelType &val)
+{
+  DisplayPixelType pix = m_Functor(val);
+  return pix;
+}
 
 
 
@@ -511,22 +537,24 @@ LinearColorMapDisplayMappingPolicy<TWrapperTraits>
 MultiChannelDisplayMode::MultiChannelDisplayMode()
 {
   UseRGB = false;
+  RenderAsGrid = false;
   SelectedScalarRep = SCALAR_REP_COMPONENT;
   SelectedComponent = 0;
 }
 
 MultiChannelDisplayMode::MultiChannelDisplayMode(
-    bool use_rgb, ScalarRepresentation rep,
+    bool use_rgb, bool render_as_grid,
+    ScalarRepresentation rep,
     int comp)
-  : UseRGB(use_rgb), SelectedScalarRep(rep),
-    SelectedComponent(comp)
+  : UseRGB(use_rgb), RenderAsGrid(render_as_grid),
+    SelectedScalarRep(rep), SelectedComponent(comp)
 {
-
 }
 
 MultiChannelDisplayMode::MultiChannelDisplayMode(int value)
 {
   UseRGB = false;
+  RenderAsGrid = false;
   SelectedScalarRep = SCALAR_REP_COMPONENT;
   SelectedComponent = 0;
 }
@@ -542,6 +570,7 @@ MultiChannelDisplayMode::DefaultForRGB()
 void MultiChannelDisplayMode::Save(Registry &reg)
 {
   reg["UseRGB"] << UseRGB;
+  reg["RenderAsGrid"] << RenderAsGrid;
   reg["SelectedScalarRep"].PutEnum(GetScalarRepNames(), SelectedScalarRep);
   reg["SelectedComponent"] << SelectedComponent;
 }
@@ -551,6 +580,7 @@ MultiChannelDisplayMode::Load(Registry &reg)
 {
   MultiChannelDisplayMode mode;
   mode.UseRGB = reg["UseRGB"][mode.UseRGB];
+  mode.RenderAsGrid = reg["RenderAsGrid"][mode.RenderAsGrid];
   mode.SelectedScalarRep = reg["SelectedScalarRep"].GetEnum(
         GetScalarRepNames(), mode.SelectedScalarRep);
   mode.SelectedComponent = reg["SelectedComponent"][mode.SelectedComponent];
@@ -573,18 +603,21 @@ MultiChannelDisplayMode::GetScalarRepNames()
 
 int MultiChannelDisplayMode::GetHashValue() const
 {
+  if(RenderAsGrid)
+    return 0x1000000;
+
   if(UseRGB)
-    return 10000;
+    return 0x8000000;
 
   if(SelectedScalarRep != SCALAR_REP_COMPONENT)
-    return SelectedScalarRep * 100;
+    return 0x4000000 + SelectedScalarRep;
 
   return SelectedComponent;
 }
 
 bool MultiChannelDisplayMode::IsSingleComponent()
 {
-  return !UseRGB && (SelectedScalarRep == SCALAR_REP_COMPONENT);
+  return !UseRGB && !RenderAsGrid && (SelectedScalarRep == SCALAR_REP_COMPONENT);
 }
 
 bool operator < (const MultiChannelDisplayMode &a, const MultiChannelDisplayMode &b)
@@ -666,7 +699,11 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
 
       // Add this filter as the input to the selector
       m_DisplaySliceSelector[i]->AddSelectableInput(
-            MultiChannelDisplayMode(true, SCALAR_REP_COMPONENT),
+            MultiChannelDisplayMode(true, false, SCALAR_REP_COMPONENT),
+            m_RGBMapper[i]->GetOutput());
+
+      m_DisplaySliceSelector[i]->AddSelectableInput(
+            MultiChannelDisplayMode(false, true, SCALAR_REP_COMPONENT),
             m_RGBMapper[i]->GetOutput());
       }
     }
@@ -723,7 +760,7 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
       for(int i = 0; i < 3; i++)
         {
         m_DisplaySliceSelector[i]->AddSelectableInput(
-              MultiChannelDisplayMode(false, rep, k),
+              MultiChannelDisplayMode(false, false, rep, k),
               sw->GetDisplaySlice(i));
         }
       }
@@ -751,6 +788,12 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
     {
     if(nc != 3)
       throw IRISException("RGB mode requested for %d component image", nc);
+    m_ScalarRepresentation = NULL;
+    }
+  else if(mode.RenderAsGrid)
+    {
+    if(nc != 3)
+      throw IRISException("Grid rendering mode requested for %d component image", nc);
     m_ScalarRepresentation = NULL;
     }
   else
@@ -806,6 +849,23 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
   else return NULL;
 }
 
+template<class TWrapperTraits>
+typename MultiChannelDisplayMappingPolicy<TWrapperTraits>::DisplayPixelType
+MultiChannelDisplayMappingPolicy<TWrapperTraits>
+::MapPixel(const PixelType &val)
+{
+  // This method should never be called directly for scalar modes (component, max, etc)
+  // because VectorImageWrapper should delegate calling this function to the
+  // appropriate scalar image wrapper.
+  assert(!m_ScalarRepresentation);
+
+  // Use the LUT
+  DisplayPixelType pix = m_RGBMapper[0]->MapPixel(val[0], val[1], val[2]);
+  return pix;
+}
+
+
+
 template <class TWrapperTraits>
 void
 MultiChannelDisplayMappingPolicy<TWrapperTraits>
@@ -820,7 +880,7 @@ bool
 MultiChannelDisplayMappingPolicy<TWrapperTraits>
 ::IsContrastMultiComponent() const
 {
-  if(m_DisplayMode.UseRGB || m_Animate)
+  if(m_DisplayMode.UseRGB || m_DisplayMode.RenderAsGrid || m_Animate)
     return true;
 
   return false;
@@ -837,7 +897,7 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
   // The native range is global componentwise max/min when we are in RGB mode
   // or when we are in single component mode (because the curves are shared
   // between these display modes).
-  if(m_DisplayMode.UseRGB ||
+  if(m_DisplayMode.UseRGB || m_DisplayMode.RenderAsGrid ||
      m_DisplayMode.SelectedScalarRep == SCALAR_REP_COMPONENT)
     {
     cmin = m_Wrapper->GetImageMinNative();
@@ -860,7 +920,7 @@ const ScalarImageHistogram *
 MultiChannelDisplayMappingPolicy<TWrapperTraits>
 ::GetHistogram(int nBins)
 {
-  if(m_DisplayMode.UseRGB)
+  if(m_DisplayMode.UseRGB || m_DisplayMode.RenderAsGrid)
     {
     // In RGB mode, we should return a pooled histogram of the data.
     return m_Wrapper->GetHistogram(nBins);
@@ -947,6 +1007,9 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
 
     // Make sure the display mode is compatible
     if(m_Wrapper && mode.UseRGB && m_Wrapper->GetNumberOfComponents() != 3)
+      mode = MultiChannelDisplayMode();
+
+    if(m_Wrapper && mode.RenderAsGrid && m_Wrapper->GetNumberOfComponents() != 3)
       mode = MultiChannelDisplayMode();
 
     if(m_Wrapper && mode.SelectedComponent >= m_Wrapper->GetNumberOfComponents())

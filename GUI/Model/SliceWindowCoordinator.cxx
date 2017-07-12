@@ -50,6 +50,10 @@ SliceWindowCoordinator
         this, &Self::GetCommonZoomValueAndRange, &Self::SetCommonZoomValue,
         ZoomLevelUpdateEvent(), ZoomLevelUpdateEvent());
 
+  m_CommonZoomFactorInLogicalPixelsModel = wrapGetterSetterPairAsProperty(
+        this, &Self::GetCommonZoomInLogicalPixelsValueAndRange, &Self::SetCommonZoomInLogicalPixelsValue,
+        ZoomLevelUpdateEvent(), ZoomLevelUpdateEvent());
+
   m_LinkedZoomModel = wrapGetterSetterPairAsProperty(
         this, &Self::GetLinkedZoomValue, &Self::SetLinkedZoomValue,
         ZoomLevelUpdateEvent(), ZoomLevelUpdateEvent());
@@ -189,16 +193,23 @@ SliceWindowCoordinator
 }
 
 void SliceWindowCoordinator
-::SetZoomPercentageInAllWindows(float x)
+::SetZoomPercentageInAllWindows(double x)
 {
   // x screen pixels = smallest voxel dimension
   // zf = x / (smallest voxel dimension)
   SetZoomLevelAllWindows(x / m_SliceModel[0]->GetSliceSpacing().min_value());
 }
 
+void SliceWindowCoordinator::SetZoomPercentageInLogicalPixelsInAllWindows(double x)
+{
+  // x screen pixels = smallest voxel dimension
+  // zf = x / (smallest voxel dimension)
+  SetZoomLevelInLogicalPixelsAllWindows(x / m_SliceModel[0]->GetSliceSpacing().min_value());
+}
+
 void 
 SliceWindowCoordinator
-::SetZoomFactorAllWindows(float factor)
+::SetZoomFactorAllWindows(double factor)
 {
   // Only if initialized
   assert(m_WindowsRegistered);
@@ -220,12 +231,29 @@ SliceWindowCoordinator
 
 void
 SliceWindowCoordinator
-::SetZoomLevelAllWindows(float level)
+::SetZoomLevelAllWindows(double level)
 {
   // Now scale the zoom in each window
   for(unsigned int i=0;i<3;i++)
     {
     m_SliceModel[i]->SetViewZoom(level);
+    }
+
+  // Invoke event
+  if(m_LinkedZoom)
+    {
+    InvokeEvent(ZoomLevelUpdateEvent());
+    }
+}
+
+void
+SliceWindowCoordinator
+::SetZoomLevelInLogicalPixelsAllWindows(double level)
+{
+  // Now scale the zoom in each window
+  for(unsigned int i=0;i<3;i++)
+    {
+    m_SliceModel[i]->SetViewZoomInLogicalPixels(level);
     }
 
   // Invoke event
@@ -255,7 +283,7 @@ SliceWindowCoordinator
 
 void
 SliceWindowCoordinator
-::ZoomInOrOutInOneWindow(unsigned int window, float factor)
+::ZoomInOrOutInOneWindow(unsigned int window, double factor)
 {
   // Only if initialized
   assert(m_WindowsRegistered);
@@ -278,7 +306,7 @@ void SliceWindowCoordinator::CenterViewOnCursorInAllWindows()
 
 void
 SliceWindowCoordinator
-::OnZoomUpdateInWindow(unsigned int irisNotUsed(window), float zoom)
+::OnZoomUpdateInWindow(unsigned int irisNotUsed(window), double zoom)
 {
   // Only if initialized
   assert(m_WindowsRegistered);
@@ -304,7 +332,7 @@ SliceWindowCoordinator
 ::SetCommonZoomToSmallestWindowZoom()
 {
   // Compute the minimum zoom
-  float minZoom = 0;
+  double minZoom = 0;
   for(unsigned int i=0; i<3; i++)
     {
     if(i == 0 || minZoom > m_SliceModel[i]->GetViewZoom())
@@ -316,18 +344,21 @@ SliceWindowCoordinator
 }
 
 
-float
-SliceWindowCoordinator
-::GetCommonZoomLevel()
+double SliceWindowCoordinator::GetCommonZoomLevel()
 {
   if(m_LinkedZoom && m_WindowsRegistered)
     return m_SliceModel[0]->GetViewZoom();
-  else return std::numeric_limits<float>::quiet_NaN();
+  else return std::numeric_limits<double>::quiet_NaN();
 }
 
-float
-SliceWindowCoordinator
-::GetCommonOptimalFitZoomLevel()
+double SliceWindowCoordinator::GetCommonZoomLevelInLogicalPixels()
+{
+  if(m_LinkedZoom && m_WindowsRegistered)
+    return m_SliceModel[0]->GetViewZoomInLogicalPixels();
+  else return std::numeric_limits<double>::quiet_NaN();
+}
+
+double SliceWindowCoordinator::GetCommonOptimalFitZoomLevel()
 {
   assert(m_LinkedZoom && m_WindowsRegistered);
   return m_SliceModel[0]->GetOptimalZoom();
@@ -335,12 +366,12 @@ SliceWindowCoordinator
 
 void
 SliceWindowCoordinator
-::GetZoomRange(unsigned int window, float &minZoom, float &maxZoom)
+::GetZoomRange(unsigned int window, double &minZoom, double &maxZoom)
 {
   assert(m_WindowsRegistered);
 
-  maxZoom = 0.0f;
-  minZoom = 0.0f;
+  maxZoom = 0.0;
+  minZoom = 0.0;
 
   for(unsigned int i=0;i<3;i++)
     {
@@ -351,26 +382,54 @@ SliceWindowCoordinator
 
       // Maximum zoom is constrained by the requirement that at least four
       // pixels are visible in at least one dimensions
-      float zMax1 = 0.25 * w / m_SliceModel[i]->GetSliceSpacing()[0];
-      float zMax2 = 0.25 * h / m_SliceModel[i]->GetSliceSpacing()[1];
-      float zMax = zMax1 > zMax2 ? zMax1 : zMax2;
-      maxZoom = (maxZoom == 0.0f || maxZoom < zMax) ? zMax : maxZoom;
+      double zMax1 = 0.25 * w / m_SliceModel[i]->GetSliceSpacing()[0];
+      double zMax2 = 0.25 * h / m_SliceModel[i]->GetSliceSpacing()[1];
+      double zMax = zMax1 > zMax2 ? zMax1 : zMax2;
+      maxZoom = (maxZoom == 0.0 || maxZoom < zMax) ? zMax : maxZoom;
 
       // Minimum zoom is just 0.25 of the optimal zoom
-      float zMin = 0.25 * m_SliceModel[i]->GetOptimalZoom();
-      minZoom = (minZoom == 0.0f || minZoom > zMin) ? zMin : minZoom;
+      double zMin = 0.25 * m_SliceModel[i]->GetOptimalZoom();
+      minZoom = (minZoom == 0.0 || minZoom > zMin) ? zMin : minZoom;
+      }
+    }
+}
+
+void
+SliceWindowCoordinator
+::GetZoomRangeInLogicalPixels(unsigned int window, double &minZoom, double &maxZoom)
+{
+  assert(m_WindowsRegistered);
+
+  maxZoom = 0.0;
+  minZoom = 0.0;
+
+  for(unsigned int i=0;i<3;i++)
+    {
+    if(m_LinkedZoom || window == i)
+      {
+      double w = (double) m_SliceModel[i]->GetSizeInLogicalPixels()[0];
+      double h = (double) m_SliceModel[i]->GetSizeInLogicalPixels()[1];
+
+      // Maximum zoom is constrained by the requirement that at least four
+      // pixels are visible in at least one dimensions
+      double zMax1 = 0.25 * w / m_SliceModel[i]->GetSliceSpacing()[0];
+      double zMax2 = 0.25 * h / m_SliceModel[i]->GetSliceSpacing()[1];
+      double zMax = zMax1 > zMax2 ? zMax1 : zMax2;
+      maxZoom = (maxZoom == 0.0 || maxZoom < zMax) ? zMax : maxZoom;
+
+      // Minimum zoom is just 0.25 of the optimal zoom
+      double zMin = 0.25 * m_SliceModel[i]->GetOptimalZoom();
+      minZoom = (minZoom == 0.0 || minZoom > zMin) ? zMin : minZoom;
       }
     }
 }
 
 
-float
-SliceWindowCoordinator
-::ClampZoom(unsigned int window,float zoom)
+double SliceWindowCoordinator::ClampZoom(unsigned int window, double zoom)
 {
   assert(m_WindowsRegistered);
 
-  float minZoom, maxZoom;
+  double minZoom, maxZoom;
   GetZoomRange(window, minZoom, maxZoom);
 
   // Apply the clamp
@@ -402,12 +461,12 @@ bool SliceWindowCoordinator::GetCommonZoomValueAndRange(
     return false;
 
   // Get the zoom
-  zoom = (double) GetCommonZoomLevel();
+  zoom = GetCommonZoomLevel();
 
   // Get the range
   if(range)
     {
-    float fmin, fmax;
+    double fmin, fmax;
     GetZoomRange(0, fmin, fmax);
 
     range->Minimum = fmin;
@@ -425,7 +484,41 @@ bool SliceWindowCoordinator::GetCommonZoomValueAndRange(
 
 void SliceWindowCoordinator::SetCommonZoomValue(double zoom)
 {
-  this->SetZoomLevelAllWindows((float) zoom);
+  this->SetZoomLevelAllWindows(zoom);
+}
+
+bool SliceWindowCoordinator
+::GetCommonZoomInLogicalPixelsValueAndRange(double &zoom, NumericValueRange<double> *range)
+{
+  // Linked zoom required
+  if(!GetLinkedZoom() || !m_ParentModel->GetDriver()->IsMainImageLoaded())
+    return false;
+
+  // Get the zoom
+  zoom = GetCommonZoomLevelInLogicalPixels();
+
+  // Get the range
+  if(range)
+    {
+    double fmin, fmax;
+    GetZoomRangeInLogicalPixels(0, fmin, fmax);
+
+    range->Minimum = fmin;
+    range->Maximum = fmax;
+
+    // Compute a reasonable step value. This is tricky, because zoom is not
+    // really a linear variable, at high zoom levels, you want steps to be
+    // larger than at small zoom levels. So how about a step that's just on
+    // the order of one hundredth of the current level?
+    range->StepSize = CalculatePowerOfTenStepSize(0, zoom, 10);
+    }
+
+  return true;
+}
+
+void SliceWindowCoordinator::SetCommonZoomInLogicalPixelsValue(double zoom)
+{
+  this->SetZoomLevelInLogicalPixelsAllWindows(zoom);
 }
 
 bool SliceWindowCoordinator::GetLinkedZoomValue(bool &out_value)
