@@ -314,8 +314,8 @@ SET(LOGIC_HEADERS
   Common/ITKExtras/itkBSplineScatteredDataPointSetToImageFilter.txx
   Common/ITKExtras/itkBinaryDiamondStructuringElement.h
   Common/ITKExtras/itkBinaryDiamondStructuringElement.txx
-  Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.h
-  Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.txx
+#   Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.h
+#   Common/ITKExtras/itkCoxDeBoorBSplineKernelFunction.txx
   Common/ITKExtras/itkMorphologicalContourInterpolator.h
   Common/ITKExtras/itkMorphologicalContourInterpolator.hxx
   Common/ITKExtras/itkParallelSparseFieldLevelSetImageFilterBugFix.h
