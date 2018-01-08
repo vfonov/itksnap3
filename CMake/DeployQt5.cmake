@@ -139,12 +139,14 @@ function(resolve_qt5_paths paths_var)
   set(${paths_var} ${paths_resolved} PARENT_SCOPE)
 endfunction()
 
-function(fixup_qt5_executable executable)
+function(fixup_qt5_executable executable_in)
   set(qtplugins ${ARGV1})
   set(libs ${ARGV2})
   set(dirs ${ARGV3})
   set(plugins_dir ${ARGV4})
   set(request_qt_conf ${ARGV5})
+
+  get_filename_component(executable "${executable_in}" ABSOLUTE)
 
   message(STATUS "fixup_qt5_executable")
   message(STATUS "  executable='${executable}'")
@@ -183,20 +185,25 @@ function(fixup_qt5_executable executable)
     list(APPEND libs ${installed_plugin_path})
   endforeach()
 
+  set(libs_abs "")
   foreach(lib ${libs})
+    get_filename_component(lib_abs "${lib}" ABSOLUTE)
+    list(APPEND libs_abs "${lib_abs}")
     if(NOT EXISTS "${lib}")
       message(FATAL_ERROR "Library does not exist: ${lib}")
     endif()
   endforeach()
+  message(STATUS "LibAbs: ${libs_abs}")
 
-  resolve_qt5_paths(libs "${executable_path}")
+  resolve_qt5_paths(libs_abs "${executable_path}")
 
   if(write_qt_conf)
     set(qt_conf_contents "[Paths]\nPlugins = ${plugins_dir}")
     write_qt5_conf("${qt_conf_dir}" "${qt_conf_contents}")
   endif()
 
-  fixup_bundle("${executable}" "${libs}" "${dirs}")
+  message(STATUS "Calling fixup_bundle(\"${executable}\" \"${libs_abs}\" \"${dirs}\")")
+  fixup_bundle("${executable}" "${libs_abs}" "${dirs}")
 endfunction()
 
 function(install_qt5_plugin_path plugin executable copy installed_plugin_path_var)

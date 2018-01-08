@@ -5,7 +5,6 @@
 #include "UIReporterDelegates.h"
 
 class QProgressDialog;
-class QGLWidget;
 
 /**
   An implementation of a viewport reporter for Qt.
@@ -21,13 +20,13 @@ public:
   /** Set the widget that we report on */
   void SetClientWidget(QWidget *widget);
 
-  bool CanReportSize();
+  bool CanReportSize() ITK_OVERRIDE;
 
-  Vector2ui GetViewportSize();
+  Vector2ui GetViewportSize() ITK_OVERRIDE;
 
-  float GetViewportPixelRatio();
+  float GetViewportPixelRatio() ITK_OVERRIDE;
 
-  Vector2ui GetLogicalViewportSize();
+  Vector2ui GetLogicalViewportSize() ITK_OVERRIDE;
 
 protected:
 

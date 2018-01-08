@@ -37,6 +37,31 @@ MACRO (TODAY RESULT)
 	string(REPLACE " " "" ${RESULT} ${${RESULT}})
 ENDMACRO (TODAY)
 
+# This macro is used to install binary targets.
+MACRO(SNAP_INSTALL_BINARY NAME CLI_NAME CLI_OPTS)
+
+  IF(APPLE)
+
+    # Install the actual executable
+    INSTALL(TARGETS ${NAME} DESTINATION ../MacOS COMPONENT Runtime)
+
+    # Create a caller .sh
+    SET(EXENAME "MacOS/${NAME}")
+    SET(EXEOPTS "${CLI_OPTS}")
+    CONFIGURE_FILE(${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/execaller.sh ${SNAP_BINARY_DIR}/MacOS/Scripts/${CLI_NAME} @ONLY)
+    INSTALL(FILES
+            ${SNAP_BINARY_DIR}/MacOS/Scripts/${CLI_NAME}
+            DESTINATION ../../.. COMPONENT Runtime
+            PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+                        GROUP_EXECUTE GROUP_READ)
+  ELSE()
+
+    INSTALL(TARGETS ${NAME} DESTINATION bin COMPONENT Runtime)
+
+  ENDIF()
+
+ENDMACRO()
+
 get_cmake_property(_variableNames VARIABLES)
 foreach (_variableName ${_variableNames})
     message(STATUS "${_variableName}=${${_variableName}}")
@@ -57,11 +82,11 @@ endforeach()
 SET(SNAP_VERSION_MAJOR 3)
 SET(SNAP_VERSION_MINOR 6)
 SET(SNAP_VERSION_PATCH 2)
-SET(SNAP_VERSION_QUALIFIER "-alpha")
+SET(SNAP_VERSION_QUALIFIER "-beta")
 
 # These fields should also be modified each time
-SET(SNAP_VERSION_RELEASE_DATE "20170401")
-SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Apr 1, 2017")
+SET(SNAP_VERSION_RELEASE_DATE "20171129")
+SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Nov 29, 2017")
 
 # This field should only change when the format of the settings files changes
 # in a non backwards-compatible way
@@ -140,16 +165,14 @@ IF(${CPACK_SYSTEM_NAME} MATCHES Windows)
 ENDIF(${CPACK_SYSTEM_NAME} MATCHES Windows)
 
 # For Apple, we need to base the filename on the architecture
-IF(CMAKE_SYSTEM_NAME MATCHES Darwin)
-  MESSAGE(STATUS "   INARCH ${CMAKE_OSX_ARCHITECTURES}")
-
-  # TODO: when CMAKE_OSX_ARCHITECTURES is not set this causes an obscure
-  # CMake error. Should generate a meaningful message instead
-  STRING(REPLACE ";" "-" ARCH "${CMAKE_OSX_ARCHITECTURES}")
-  SET(CPACK_SYSTEM_NAME "MacOS-${ARCH}")
-  MESSAGE(STATUS "   ARCH ${ARCH}")
-  MESSAGE(STATUS "   CMAKE_OSX_ARCHITECTURES ${CMAKE_OSX_ARCHITECTURES}")
-ENDIF(CMAKE_SYSTEM_NAME MATCHES Darwin)
+IF(CMAKE_SYSTEM_NAME MATCHES Darwin AND CMAKE_OSX_ARCHITECTURES)
+  LIST(LENGTH CMAKE_OSX_ARCHITECTURES _length)
+  IF(_length GREATER 1)
+    SET(CPACK_SYSTEM_NAME Darwin-Universal)
+  ELSE()
+    SET(CPACK_SYSTEM_NAME Darwin-${CMAKE_OSX_ARCHITECTURES})
+  ENDIF()
+ENDIF()
 
 MESSAGE(STATUS "   CPACK_SYSTEM_NAME ${CPACK_SYSTEM_NAME}")
 
@@ -183,6 +206,17 @@ OPTION(SNAP_USE_GPU "Use GPU in SNAP" OFF)
 CONFIGURE_FILE(
   ${SNAP_SOURCE_DIR}/Common/GPUSettings.h.in
   ${SNAP_BINARY_DIR}/GPUSettings.h @ONLY IMMEDIATE)
+
+# Configure version-specific Qt code
+IF(SNAP_USE_QT4)
+  CONFIGURE_FILE(
+    ${SNAP_SOURCE_DIR}/GUI/Qt/Components/SNAPOpenGLWidget_Qt4.h.in
+    ${SNAP_BINARY_DIR}/SNAPOpenGLWidget.h @ONLY IMMEDIATE)
+ELSE()
+  CONFIGURE_FILE(
+    ${SNAP_SOURCE_DIR}/GUI/Qt/Components/SNAPOpenGLWidget_Qt5.h.in
+    ${SNAP_BINARY_DIR}/SNAPOpenGLWidget.h @ONLY IMMEDIATE)
+ENDIF()
 
 # The part of the source code devoted to the SNAP application logic
 # is organized into a separate library
@@ -737,6 +771,7 @@ SET(UI_NONMOC_HEADERS
   GUI/Qt/Components/QtRendererPlatformSupport.h
   GUI/Qt/Components/QtReporterDelegates.h
   GUI/Qt/Components/SNAPQtCommon.h
+  ${SNAP_BINARY_DIR}/SNAPOpenGLWidget.h
   GUI/Qt/Coupling/QtAbstractButtonCoupling.h
   GUI/Qt/Coupling/QtAbstractItemViewCoupling.h
   GUI/Qt/Coupling/QtActionCoupling.h
@@ -883,6 +918,7 @@ ELSE( CMAKE_GENERATOR MATCHES "Visual Studio 6" )
     ${SNAP_SOURCE_DIR}/Submodules/c3d/itkextras/RandomForest
     ${SNAP_SOURCE_DIR}/Submodules/c3d/api
     ${SNAP_SOURCE_DIR}/Submodules/greedy/src
+    ${SNAP_SOURCE_DIR}/Submodules/greedy/src/ITKFilters/include
     ${SNAP_SOURCE_DIR}/GUI
     ${SNAP_SOURCE_DIR}/GUI/Model
     ${SNAP_SOURCE_DIR}/GUI/Renderer
@@ -941,8 +977,7 @@ SET(SNAP_SUBMODULE_LIBS
 
 # System libraries
 SET(SNAP_SYSTEM_LIBS
-  ${OPENGL_LIBRARIES}
-  ${OPENGL_glu_LIBRARY}
+  ${SNAP_OPENGL_LIBS}
   ${SYSTEM_LIBS}
 )
 
@@ -1022,12 +1057,6 @@ IF(APPLE)
   # the icon file
   SET(SNAP_OSX_ICON ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/itksnap.icns)
 
-  # set how it shows up in the Info.plist file
-  SET(MACOSX_BUNDLE_ICON_FILE itksnap.icns) 
-  
-  # set where in the bundle to put the icns file
-  SET_SOURCE_FILES_PROPERTIES(${SNAP_OSX_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-
   # include the icns file in the target
   SET(SNAP_MAIN_SRC ${SNAP_MAIN_SRC} ${SNAP_OSX_ICON})
 
@@ -1046,14 +1075,8 @@ ENDIF(WIN32)
 SET(SNAP_BUNDLE_NAME ITK-SNAP)
 
 # Configure the executable's sources and libraries
-ADD_EXECUTABLE(${SNAP_BUNDLE_NAME} WIN32 MACOSX_BUNDLE ${SNAP_MAIN_SRC})
+ADD_EXECUTABLE(${SNAP_BUNDLE_NAME} WIN32 ${SNAP_MAIN_SRC})
 TARGET_LINK_LIBRARIES(${SNAP_BUNDLE_NAME} ${SNAP_INTERNAL_LIBS} ${SNAP_EXTERNAL_LIBS})
-
-# On apple, we also need our custom plist.info file to be configured
-IF(APPLE)
-  SET_TARGET_PROPERTIES(${SNAP_BUNDLE_NAME} PROPERTIES MACOSX_BUNDLE_INFO_PLIST
-    ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/Info.plist)
-ENDIF(APPLE)
 
 #--------------------------------------------------------------------------------
 # Testing-related executables
@@ -1244,31 +1267,37 @@ MESSAGE(STATUS "   DESTDIR $ENV{DESTDIR}")
 
 IF(APPLE)
 
-  # on Apple, the bundle is at the root of the
-  # install tree, and on other platforms it'll go into the bin directory.
-  INSTALL(TARGETS ${SNAP_BUNDLE_NAME} 
-      BUNDLE DESTINATION . COMPONENT Runtime)
+  # Use the Bundle insaller
+  SET(CPACK_GENERATOR Bundle)
+  SET(CPACK_EXTENSION "dmg")
 
-  # On apple, we put a binary script along with a README file
-  INSTALL(FILES
-          ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/itksnap
-          DESTINATION . COMPONENT Runtime
-          PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
-                      GROUP_EXECUTE GROUP_READ)
+  # Set the name of the application
+  SET(CPACK_BUNDLE_NAME "ITK-SNAP")
+
+  # Set the info.plist file
+  SET(CPACK_BUNDLE_PLIST_SOURCE ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/Info.plist)
+  SET(CPACK_BUNDLE_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist")
+  CONFIGURE_FILE("${CPACK_BUNDLE_PLIST_SOURCE}" "${CPACK_BUNDLE_PLIST}" @ONLY)
+  INSTALL(FILES ${CPACK_BUNDLE_PLIST} DESTINATION ..)
+
+  # The icon
+  SET(CPACK_BUNDLE_ICON ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/itksnap.icns)
+
+  # Code signing certificate - optional
+  SET(SNAP_MACOSX_CODESIGN_CERT "" CACHE STRING "Name of the Apple Developer Certificate to sign application")
+  MARK_AS_ADVANCED(SNAP_MACOSX_CODESIGN_CERT)
+  IF(SNAP_MACOSX_CODESIGN_CERT)
+    SET(CPACK_BUNDLE_APPLE_CERT_APP ${SNAP_MACOSX_CODESIGN_CERT})
+  ENDIF()
+
+  # Install the main executable
+  SNAP_INSTALL_BINARY(${SNAP_BUNDLE_NAME} itksnap "--console")
 
   # Try adding a link to /usr/local/bin
-  INSTALL(CODE "EXECUTE_PROCESS(COMMAND ln -sf /usr/local/bin usr_local_bin WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX})")
-
-  INSTALL(FILES
-          ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/README.txt
-          DESTINATION . COMPONENT Runtime)
-
-  #INSTALL(FILES
-  #        ${SNAP_BINARY_DIR}/usr_local_bin
-  #        DESTINATION . COMPONENT Runtime)
+  INSTALL(CODE "EXECUTE_PROCESS(COMMAND ln -sf /usr/local/bin usr_local_bin WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/../../../)")
 
   # Set the DS STORE
-  SET(CPACK_DMG_DS_STORE ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/dsstore.bin)
+  SET(CPACK_DMG_DS_STORE_SETUP_SCRIPT ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/make_dsstore.scpt)
   SET(CPACK_DMG_BACKGROUND_IMAGE ${SNAP_SOURCE_DIR}/Utilities/MacOS/BundleResources/background.png)
 
   IF(NOT SNAP_USE_QT4)
@@ -1280,7 +1309,7 @@ IF(APPLE)
     get_property(QT_GIF_PLUGIN TARGET Qt5::QGifPlugin PROPERTY LOCATION_RELEASE)
 
     # Install with the plugin
-    install_qt5_executable(${SNAP_BUNDLE_NAME}.app "${QT_GIF_PLUGIN}")
+    install_qt5_executable(../../../${SNAP_BUNDLE_NAME}.app "${QT_GIF_PLUGIN}")
 
   ELSE(NOT SNAP_USE_QT4)
 
@@ -1305,7 +1334,7 @@ ELSEIF(WIN32)
       get_property(QT_GIF_PLUGIN TARGET Qt5::QGifPlugin PROPERTY LOCATION_RELEASE)
 
       # Install with the plugin
-      install_qt5_executable(bin/${SNAP_BUNDLE_NAME}.exe "${QT_GIF_PLUGIN};${QT_WIN_PLUGIN}")
+      install_qt5_executable(bin/${SNAP_BUNDLE_NAME}.exe "${QT_GIF_PLUGIN};${QT_WIN_PLUGIN}"  "" "${VTK_RUNTIME_LIBRARY_DIRS}")
 
   ELSE(NOT SNAP_USE_QT4)
 
@@ -1316,11 +1345,13 @@ ELSEIF(WIN32)
   ENDIF(NOT SNAP_USE_QT4)
 
   # On windows, we have to configure NSIS
+  SET(CPACK_NSIS_MUI_ICON "${SNAP_SOURCE_DIR}/Utilities/Win32/snaplogo.ico")
   SET(CPACK_NSIS_INSTALLED_ICON_NAME "ITK-SNAP.exe")
   SET(CPACK_NSIS_DISPLAY_NAME "${CPACK_PACKAGE_INSTALL_DIRECTORY} ITK-SNAP")
   SET(CPACK_NSIS_HELP_LINK "http:\\\\\\\\www.itksnap.org")
   SET(CPACK_NSIS_URL_INFO_ABOUT "http:\\\\\\\\www.itksnap.org/credits.php")
-  SET(CPACK_NSIS_MODIFY_PATH OFF)
+  SET(CPACK_NSIS_MODIFY_PATH ON)
+  SET(CPACK_NSIS_MENU_LINKS "http://itksnap.org" "ITK-SNAP Web Site")
 
   # CMake does not yet know to install into (x64) program files or not
   IF(CMAKE_CL_64)
@@ -1399,8 +1430,7 @@ ENDIF()
 
 # Which generator to use
 IF(APPLE)
-  SET(CPACK_GENERATOR DragNDrop)
-  SET(CPACK_EXTENSION "dmg")
+  # Above
 ELSEIF(WIN32)
   SET(CPACK_GENERATOR NSIS)
   SET(CPACK_EXTENSION "exe")
@@ -1462,3 +1492,8 @@ ADD_CUSTOM_TARGET(upload_experimental
   COMMENT "Uploading package ${CPACK_PACKAGE_FILE_NAME_WEXT} to SourceForge.net as ${EXPERIMENTAL_TARGET}")
 
 
+#--------------------------------------------------------------------------------
+# ALFABIS utilities (experimental)
+#--------------------------------------------------------------------------------
+# Workspace tool is automatically included
+ADD_SUBDIRECTORY(${SNAP_SOURCE_DIR}/Utilities/Workspace)
