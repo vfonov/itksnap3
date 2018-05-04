@@ -89,19 +89,9 @@ ENDIF()
 
 # These four fields should be modified when versions change
 SET(SNAP_VERSION_MAJOR 3)
-<<<<<<< HEAD
-SET(SNAP_VERSION_MINOR 6)
-SET(SNAP_VERSION_PATCH 0)
-SET(SNAP_VERSION_QUALIFIER "-minc")
-||||||| merged common ancestors
-SET(SNAP_VERSION_MINOR 6)
-SET(SNAP_VERSION_PATCH 2)
-SET(SNAP_VERSION_QUALIFIER "-alpha")
-=======
 SET(SNAP_VERSION_MINOR 8)
 SET(SNAP_VERSION_PATCH 0)
 SET(SNAP_VERSION_QUALIFIER "-alpha")
->>>>>>> c5687adc5007157ee44944917ceaae5aa56382cc
 
 # These fields should also be modified each time
 SET(SNAP_VERSION_RELEASE_DATE "20180425")
