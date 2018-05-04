@@ -86,6 +86,10 @@ GenericSliceRenderer::SetModel(GenericSliceModel *model)
   Rebroadcast(m_Model->GetParentUI()->GetDriver()->GetGlobalState()->GetSelectedLayerIdModel(),
               ValueChangedEvent(), AppearanceUpdateEvent());
 
+  Rebroadcast(m_Model->GetParentUI()->GetDriver()->GetGlobalState()->GetSelectedSegmentationLayerIdModel(),
+              ValueChangedEvent(), AppearanceUpdateEvent());
+
+
   Rebroadcast(m_Model->GetHoveredImageLayerIdModel(), ValueChangedEvent(), AppearanceUpdateEvent());
   Rebroadcast(m_Model->GetHoveredImageIsThumbnailModel(), ValueChangedEvent(), AppearanceUpdateEvent());
 
@@ -735,10 +739,16 @@ void GenericSliceRenderer::DrawSegmentationTexture()
   GenericImageData *id = m_Model->GetImageData();
   double alpha = m_Model->GetParentUI()->GetDriver()->GetGlobalState()->GetSegmentationAlpha();
 
-  if (id->IsSegmentationLoaded() && alpha > 0)
+  if (alpha > 0)
     {
-    Texture *texture = this->GetTextureForLayer(id->GetSegmentation());
-    texture->DrawTransparent(alpha);
+    // Search for the texture to draw
+    ImageWrapperBase *seg_layer =
+        id->FindLayer(m_Model->GetParentUI()->GetGlobalState()->GetSelectedSegmentationLayerId(), false, LABEL_ROLE);
+    if(seg_layer)
+      {
+      Texture *texture = this->GetTextureForLayer(seg_layer);
+      texture->DrawTransparent(alpha);
+      }
     }
   }
 

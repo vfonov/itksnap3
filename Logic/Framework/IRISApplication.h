@@ -70,6 +70,7 @@ class GaussianMixtureModel;
 struct IRISDisplayGeometry;
 class LabelUseHistory;
 class ImageAnnotationData;
+class LabelImageWrapper;
 
 template <class TPixel, class TLabel, int VDim> class RandomForestClassifier;
 template <class TPixel, class TLabel, int VDim> class RFClassificationEngine;
@@ -244,11 +245,17 @@ public:
    * image types. This method loads the associated settings and metadata for the
    * image either from the user's image associations directory (default) or from
    * the provided Registry object.
+   *
+   * TODO: the additive flag is currently only for segmentations and it's a disaster
+   * and should be refactored into something more elegant. For example we could get
+   * rid of the overlay role completely and just label layers as anatomical/segment-n
+   * in which case the additive flag would actually begin to make some sense.
    */
   void LoadImage(const char *fname, LayerRole role,
                  IRISWarningList &wl,
                  Registry *meta_data_reg = NULL,
-                 Registry *io_hints_reg = NULL);
+                 Registry *io_hints_reg = NULL,
+                 bool additive = false);
 
   /**
    * Create a delegate for saving an image interactively or non-interactively
@@ -311,7 +318,13 @@ public:
    * Update the IRIS image data with an external segmentation image (e.g., 
    * loaded from a file).
    */
-  void UpdateIRISSegmentationImage(GuidedNativeImageIO *io);
+  LabelImageWrapper *UpdateIRISSegmentationImage(
+      GuidedNativeImageIO *io, Registry *metadata, bool add_to_existing = false);
+
+  /**
+   * This method gets the currently selected segmentation image
+   */
+  LabelImageWrapper *GetSelectedSegmentationLayer() const;
 
   /**
    * Update the SNAP image data with an external segmentation image (e.g.,
@@ -320,7 +333,7 @@ public:
    * TODO: this should probably change when we allow multiple concurrent segmentation
    * images to be used in SNAP mode.
    */
-  void UpdateSNAPSegmentationImage(GuidedNativeImageIO *io);
+  LabelImageWrapper * UpdateSNAPSegmentationImage(GuidedNativeImageIO *io);
 
 
   /** 
@@ -332,6 +345,16 @@ public:
    * Clear the SNAP segmentation image (active during pre-segmentation)
    */
   void ResetSNAPSegmentationImage();
+
+  /**
+   * Unload a specific segmentation
+   */
+  void UnloadSegmentation(ImageWrapperBase *seg);
+
+  /**
+   * Add a new blank segmentation and select it
+   */
+  void AddBlankSegmentation();
 
   /**
    * Update the SNAP image data with an external speed image (e.g., 
@@ -739,6 +762,9 @@ protected:
   void EnterRandomForestPreprocessingMode();
   void LeaveRandomForestPreprocessingMode();
 
+  // Go overall all labels in the segmentation wrapper and mark them as valid in the color table
+  void SetColorLabelsInSegmentationAsValid(LabelImageWrapper *seg);
+
   // ----------------------- Project support ------------------------------
 
   // Cached state of the project at the time of last open/save. Used to check
@@ -751,13 +777,9 @@ protected:
   // Auto-adjust contrast of a layer on load
   void AutoContrastLayerOnLoad(ImageWrapperBase *layer);
 
-  typedef ImageWrapperBase::ITKTransformType ITKTransformType;
+  // -------------- Saving IRIS state during SNAP mode --------------------
+  unsigned long m_SavedIRISSelectedSegmentationLayerId;
 
-  // Read transform from project registry
-  SmartPtr<ITKTransformType> ReadTransform(Registry *reg, bool &is_identity);
-
-  // Write transform to project registry
-  void WriteTransform(Registry *reg, const ITKTransformType *transform);
 };
 
 #endif // __IRISApplication_h_

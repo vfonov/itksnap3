@@ -71,6 +71,7 @@
 #include "SaveModifiedLayersDialog.h"
 #include <InterpolateLabelsDialog.h>
 #include "RegistrationDialog.h"
+#include "DistributedSegmentationDialog.h"
 
 #include <QAbstractListModel>
 #include <QItemDelegate>
@@ -81,7 +82,6 @@
 #include <QDragEnterEvent>
 #include <QUrl>
 #include <QFileDialog>
-#include <QGLWidget>
 #include <QDesktopServices>
 #include <SNAPQtCommon.h>
 #include <QMimeData>
@@ -213,6 +213,9 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   m_InterpolateLabelsDialog = new InterpolateLabelsDialog(this);
   m_InterpolateLabelsDialog->setModal(false);
 
+  m_DSSDialog = new DistributedSegmentationDialog(this);
+  m_DSSDialog->setModal(false);
+
 
   // Initialize the docked panels
   m_DockLeft = new QDockWidget(this);
@@ -310,6 +313,7 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   // Create the delegate to pass in to the model
   m_ProgressReporterDelegate = new QtProgressReporterDelegate();
   m_ProgressReporterDelegate->SetProgressDialog(m_Progress);
+  m_Progress->reset();
 
   // Set title
   this->setWindowTitle("ITK-SNAP");
@@ -344,6 +348,8 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   this->HookupShortcutToAction(QKeySequence("\\"), ui->actionToggleLayerLayout);
   this->HookupShortcutToAction(QKeySequence("["), ui->actionActivatePreviousLayer);
   this->HookupShortcutToAction(QKeySequence("]"), ui->actionActivateNextLayer);
+  this->HookupShortcutToAction(QKeySequence("{"), ui->actionActivatePreviousSegmentationLayer);
+  this->HookupShortcutToAction(QKeySequence("}"), ui->actionActivateNextSegmentationLayer);
 
   // Common modifiers
   const QString mod_option(QChar(0x2325));
@@ -418,6 +424,14 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
 
   // Start with the "close window" menu item hidden
   ui->actionClose_Window->setVisible(false);
+
+  // Configure the install command-line tools option
+  ui->actionInstallCLI->setVisible(false);
+#ifdef __APPLE__
+  QFileInfo fi(QCoreApplication::applicationDirPath(), "../bin/install_cmdl.sh");
+  if(fi.exists() && fi.isExecutable())
+    ui->actionInstallCLI->setVisible(true);
+#endif
 }
 
 
@@ -463,6 +477,7 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   m_PreferencesDialog->SetModel(model->GetGlobalPreferencesModel());
   m_InterpolateLabelsDialog->SetModel(model->GetInterpolateLabelModel());
   m_RegistrationDialog->SetModel(model->GetRegistrationModel());
+  m_DSSDialog->SetModel(model->GetDistributedSegmentationModel());
 
   // Initialize the docked panels
   m_ControlPanel->SetModel(model);
@@ -515,6 +530,11 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
         model->GetDriver()->GetGlobalState()->GetSelectedLayerIdModel(),
         ValueChangedEvent(), this, SLOT(onModelUpdate(EventBucket)));
 
+  LatentITKEventNotifier::connect(
+        model->GetDriver()->GetGlobalState()->GetSelectedSegmentationLayerIdModel(),
+        ValueChangedEvent(), this, SLOT(onModelUpdate(EventBucket)));
+
+
   // Couple the visibility of each view panel to the correponding property
   // model in DisplayLayoutModel
   DisplayLayoutModel *layoutModel = m_Model->GetDisplayLayoutModel();
@@ -545,6 +565,8 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   activateOnFlag(ui->actionToggleLayerLayout, m_Model, UIF_MULTIPLE_BASE_LAYERS);
   activateOnFlag(ui->actionActivateNextLayer, m_Model, UIF_MULTIPLE_BASE_LAYERS);
   activateOnFlag(ui->actionActivatePreviousLayer, m_Model, UIF_MULTIPLE_BASE_LAYERS);
+  activateOnFlag(ui->actionActivateNextSegmentationLayer, m_Model, UIF_MULTIPLE_SEGMENTATION_LAYERS);
+  activateOnFlag(ui->actionActivatePreviousSegmentationLayer, m_Model, UIF_MULTIPLE_SEGMENTATION_LAYERS);
 
   // Add actions that are not on the menu
   activateOnFlag(ui->actionZoomToFitInAllViews, m_Model, UIF_BASEIMG_LOADED);
@@ -557,6 +579,8 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   // Set up activations - Segmentation menu
   activateOnFlag(ui->actionLoad_from_Image, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionClear, m_Model, UIF_BASEIMG_LOADED);
+  activateOnFlag(ui->actionClearActive, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
+  activateOnFlag(ui->menuAddSegmentation, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionSaveSegmentation, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionSaveSegmentationAs, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionSave_as_Mesh, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
@@ -636,7 +660,23 @@ void MainImageWindow::ShowFirstTime()
 // Slot for model updates
 void MainImageWindow::onModelUpdate(const EventBucket &b)
 {
-  if(b.HasEvent(MainImageDimensionsChangeEvent()))
+  bool main_changed = b.HasEvent(MainImageDimensionsChangeEvent());
+  bool layers_changed = b.HasEvent(LayerChangeEvent());
+  bool layers_meta_changed = b.HasEvent(WrapperMetadataChangeEvent());
+  bool proj_file_changed =
+      b.HasEvent(ValueChangedEvent(), m_Model->GetGlobalState()->GetProjectFilenameModel());
+  bool main_history_changed =
+      b.HasEvent(ValueChangedEvent(), m_Model->GetHistoryModel("MainImage"));
+  bool proj_history_changed =
+      b.HasEvent(ValueChangedEvent(), m_Model->GetHistoryModel("Project"));
+  bool selected_layer_changed =
+      b.HasEvent(ValueChangedEvent(), m_Model->GetGlobalState()->GetSelectedLayerIdModel());
+  bool selected_seg_layer_changed =
+      b.HasEvent(ValueChangedEvent(), m_Model->GetGlobalState()->GetSelectedSegmentationLayerIdModel());
+  bool display_layout_changed = b.HasEvent(DisplayLayoutModel::DisplayLayoutChangeEvent());
+  bool layer_layout_changed = b.HasEvent(DisplayLayoutModel::LayerLayoutChangeEvent());
+
+  if(main_changed)
     {
     // Delaying the relayout of the main window seems to reduce the amount of
     // flashing that occurs when loading images.
@@ -645,46 +685,31 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
     this->UpdateMainLayout();
     }
 
-  if(b.HasEvent(LayerChangeEvent()) || b.HasEvent(WrapperMetadataChangeEvent()))
-    {
-    // Update the window title
-    this->UpdateWindowTitle();
-    this->UpdateSelectedLayerActions();
-    }
-
-  if(b.HasEvent(LayerChangeEvent()) ||
-     b.HasEvent(ValueChangedEvent(), m_Model->GetHistoryModel("MainImage")))
+  if(layers_changed || main_history_changed)
     {
     this->UpdateRecentMenu();
     this->UpdateDICOMContentsMenu();
     }
 
-  if(b.HasEvent(ValueChangedEvent(), m_Model->GetHistoryModel("Project")))
-    {
+  if(proj_history_changed)
     this->UpdateRecentProjectsMenu();
-    }
 
-  if(b.HasEvent(ValueChangedEvent(), m_Model->GetGlobalState()->GetProjectFilenameModel()))
-    {
-    this->UpdateWindowTitle();
+  if(proj_file_changed)
     this->UpdateProjectMenuItems();
-    }
 
-  if(b.HasEvent(DisplayLayoutModel::DisplayLayoutChangeEvent()))
-    {
+  if(display_layout_changed)
     this->UpdateCanvasDimensions();
-    }
 
-  if(b.HasEvent(DisplayLayoutModel::LayerLayoutChangeEvent()))
-    {
+  if(layer_layout_changed)
     this->UpdateLayerLayoutActions();
-    }
 
-  if(b.HasEvent(ValueChangedEvent(),
-                m_Model->GetDriver()->GetGlobalState()->GetSelectedLayerIdModel()))
-    {
+  if(layers_changed || layers_meta_changed || selected_layer_changed)
     this->UpdateSelectedLayerActions();
-    }
+
+  if(layers_changed || layers_meta_changed || proj_file_changed || selected_seg_layer_changed)
+    this->UpdateWindowTitle();
+
+
 }
 
 void MainImageWindow::externalStyleSheetFileChanged(const QString &file)
@@ -921,6 +946,9 @@ void MainImageWindow::UpdateRecentMenu()
 
   this->CreateRecentMenu(ui->menuRecent_Segmentations, "LabelImage", false, 5,
                          SLOT(LoadRecentSegmentationActionTriggered()));
+
+  this->CreateRecentMenu(ui->menuAddSegmentation_Recent, "LabelImage", false, 5,
+                         SLOT(LoadAnotherRecentSegmentationActionTriggered()));
 }
 
 void MainImageWindow::UpdateRecentProjectsMenu()
@@ -938,7 +966,7 @@ void MainImageWindow::UpdateWindowTitle()
   if(gid && gid->IsMainLoaded())
     {
     mainfile = QFileInfo(from_utf8(gid->GetMain()->GetFileName())).fileName();
-    segfile = QFileInfo(from_utf8(gid->GetSegmentation()->GetFileName())).fileName();
+    segfile = QFileInfo(from_utf8(m_Model->GetDriver()->GetSelectedSegmentationLayer()->GetFileName())).fileName();
     }
 
   // If a project is loaded, we display the project title
@@ -948,6 +976,7 @@ void MainImageWindow::UpdateWindowTitle()
   // Set up the window title
   if(projfile.length())
     {
+    // If a project has multiple layers, we should indicate which segmentation image is being viewed
     this->setWindowTitle(QString("%1 - ITK-SNAP").arg(projfile));
     }
   else if(mainfile.length() && segfile.length())
@@ -979,6 +1008,22 @@ void MainImageWindow::UpdateWindowTitle()
     {
     ui->actionSaveSegmentation->setText(QString("Save"));
     ui->actionSaveSegmentationAs->setText(QString("Save as..."));
+    }
+
+  // Set up the segmentation items
+  if(gid->GetNumberOfLayers(LABEL_ROLE) > 1)
+    {
+    ui->actionClear->setText(QString("Unload All Segmentations"));
+    ui->actionClearActive->setVisible(true);
+    if(segfile.length())
+      ui->actionClearActive->setText(QString("Unload \"%1\"").arg(segfile));
+    else
+      ui->actionClearActive->setText(QString("Unload Active Segmentation"));
+    }
+  else
+    {
+    ui->actionClear->setText(QString("Unload Segmentation"));
+    ui->actionClearActive->setVisible(false);
     }
 }
 
@@ -1325,12 +1370,8 @@ void MainImageWindow::LoadRecentOverlayActionTriggered()
     }
 }
 
-void MainImageWindow::LoadRecentSegmentationActionTriggered()
+void MainImageWindow::LoadRecentSegmentation(QString file, bool additive)
 {
-  // Get the filename that wants to be loaded
-  QAction *action = qobject_cast<QAction *>(sender());
-  QString file = action->text();
-
   // Prompt for unsaved changes
   if(!SaveModifiedLayersDialog::PromptForUnsavedSegmentationChanges(m_Model))
     return;
@@ -1343,6 +1384,7 @@ void MainImageWindow::LoadRecentSegmentationActionTriggered()
     IRISWarningList warnings;
     SmartPtr<LoadSegmentationImageDelegate> del = LoadSegmentationImageDelegate::New();
     del->Initialize(m_Model->GetDriver());
+    del->SetAdditiveMode(additive);
     m_Model->GetDriver()->LoadImageViaDelegate(file.toUtf8().constData(), del, warnings);
     }
   catch(exception &exc)
@@ -1350,6 +1392,23 @@ void MainImageWindow::LoadRecentSegmentationActionTriggered()
     ReportNonLethalException(this, exc, "Image IO Error",
                              QString("Failed to load segmentation image %1").arg(file));
     }
+}
+
+
+void MainImageWindow::LoadRecentSegmentationActionTriggered()
+{
+  // Get the filename that wants to be loaded
+  QAction *action = qobject_cast<QAction *>(sender());
+  QString file = action->text();
+  LoadRecentSegmentation(file, false);
+}
+
+void MainImageWindow::LoadAnotherRecentSegmentationActionTriggered()
+{
+  // Get the filename that wants to be loaded
+  QAction *action = qobject_cast<QAction *>(sender());
+  QString file = action->text();
+  LoadRecentSegmentation(file, true);
 }
 
 void MainImageWindow::LoadAnotherDicomActionTriggered()
@@ -1398,6 +1457,21 @@ void MainImageWindow::LoadProject(const QString &file)
     {
     ReportNonLethalException(this, exc, "Error Opening Project",
                              QString("Failed to open project %1").arg(file));
+  }
+}
+
+void MainImageWindow::LoadProjectInNewInstance(const QString &file)
+{
+  std::list<std::string> args;
+  args.push_back("-w");
+  args.push_back(to_utf8(file));
+  try
+  {
+  m_Model->GetSystemInterface()->LaunchChildSNAPSimple(args);
+  }
+  catch(IRISException &exc)
+  {
+    ReportNonLethalException(this, exc, "Failed to open workspace in new ITK-SNAP window");
   }
 }
 
@@ -1607,7 +1681,7 @@ void MainImageWindow::ExportScreenshotSeries(AnatomicalDirection direction)
     return;
 
   // Generate the output filename
-  const char *names[] = { "axial0001.png", "coronal0001.png", "sagittal0001.png" };
+  const char *names[] = { "axial0001.png", "sagittal0001.png", "coronal0001.png" };
   std::string filename = to_utf8(QDir(duser).filePath(names[direction]));
 
   // back up cursor location
@@ -1632,7 +1706,9 @@ void MainImageWindow::ExportScreenshotSeries(AnatomicalDirection direction)
     // Repaint the GL window and save screenshot
     target->SaveScreenshot(filename);
     target->update();
-    // QCoreApplication::processEvents();
+
+    // Needed for this to actually save individual screenshots
+    QCoreApplication::processEvents();
 
     // Go to the next slice
     xCrossImage[iImageDir]++;
@@ -1729,7 +1805,7 @@ void MainImageWindow::on_actionVolumesAndStatistics_triggered()
 bool MainImageWindow::SaveSegmentation(bool interactive)
 {
   return SaveImageLayer(
-        m_Model, m_Model->GetDriver()->GetCurrentImageData()->GetSegmentation(),
+        m_Model, m_Model->GetDriver()->GetSelectedSegmentationLayer(),
         LABEL_ROLE, interactive, this);
 }
 
@@ -2241,4 +2317,86 @@ void MainImageWindow::on_actionMainControlPanel_triggered()
     m_DockLeft->show();
   else
     m_DockLeft->hide();
+}
+
+void MainImageWindow::on_actionActivateNextSegmentationLayer_triggered()
+{
+  // Get the list of all the segmentation images
+  m_Model->CycleSelectedSegmentationLayer(1);
+}
+
+void MainImageWindow::on_actionActivatePreviousSegmentationLayer_triggered()
+{
+  m_Model->CycleSelectedSegmentationLayer(-1);
+}
+
+void MainImageWindow::on_actionAddSegmentation_New_triggered()
+{
+  // Create an empty new segmentation
+  m_Model->GetDriver()->AddBlankSegmentation();
+}
+
+void MainImageWindow::on_actionAddSegmentation_Open_triggered()
+{
+  // This is the same as opening segmentation, but with the "add" feature
+  // Create a model for IO
+  SmartPtr<LoadSegmentationImageDelegate> delegate = LoadSegmentationImageDelegate::New();
+  delegate->Initialize(m_Model->GetDriver());
+  delegate->SetAdditiveMode(true);
+
+  SmartPtr<ImageIOWizardModel> model = ImageIOWizardModel::New();
+  model->InitializeForLoad(m_Model, delegate);
+
+  // Execute the IO wizard
+  ImageIOWizard wiz(this);
+  wiz.SetModel(model);
+  wiz.exec();
+}
+
+void MainImageWindow::on_actionClearActive_triggered()
+{
+  // This is the layer that needs to be closed
+  LabelImageWrapper *liw = m_Model->GetDriver()->GetSelectedSegmentationLayer();
+
+  // Prompt for unsaved changes
+  if(!SaveModifiedLayersDialog::PromptForUnsavedChanges(m_Model, liw))
+    return;
+
+  // Unload the wrapper
+  m_Model->GetDriver()->UnloadSegmentation(liw);
+}
+
+void MainImageWindow::on_actionInstallCLI_triggered()
+{
+#ifdef __APPLE__
+  QFileInfo fi(QCoreApplication::applicationDirPath(), "../bin/install_cmdl.sh");
+  if(fi.exists() && fi.isExecutable())
+    {
+    QString html = QString(
+        "<p>ITK-SNAP is packaged with several useful command-line programs. "
+        "Visit <a href='http://itksnap.org/cmdl'>http://itksnap.org/cmdl</a> "
+        "for a listing of these tools. </p>"
+        "<p>To create links to these programs in <b>/usr/local/bin</b>, "
+        "execute the following command in the Terminal App:</p>"
+        "<code> sudo %1 </code>"
+        "<p>To create links in another directory 'my_directory', execute </p>"
+        "<code> sudo %1 my_directory </code>"
+        "<p>To enable the tools for a single session, enter this command into the "
+        "Terminal window:</p>"
+        "<code> export PATH=%2:$PATH </code>").
+        arg(fi.absoluteFilePath(), fi.absoluteDir().absolutePath());
+
+    QMessageBox msg;
+    msg.setText("How to Install ITK-SNAP Command Line Tools");
+    msg.setInformativeText(html);
+    msg.setWindowTitle("Install Command Line Tools -- ITK-SNAP");
+    msg.setStyleSheet("QLabel{min-width: 700px;}");
+    msg.exec();
+    }
+#endif
+}
+
+void MainImageWindow::on_actionDSS_triggered()
+{
+  RaiseDialog(m_DSSDialog);
 }

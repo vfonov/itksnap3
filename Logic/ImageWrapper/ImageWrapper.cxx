@@ -71,7 +71,7 @@
 #include "GuidedNativeImageIO.h"
 #include "itkTransform.h"
 #include "itkExtractImageFilter.h"
-#include "itkMatrixOffsetTransformBase.h"
+#include "AffineTransformHelper.h"
 
 
 #include <vnl/vnl_inverse.h>
@@ -119,7 +119,13 @@ public:
 
   static void Write(ImageType *image, const char *fname, Registry &hints)
   {
-    throw IRISException("FillBuffer unsupported for class %s",
+    throw IRISException("Write unsupported for class %s",
+                        image->GetNameOfClass());
+  }
+
+  static void WriteAsFloat(ImageType *image, const char *fname, Registry &hints, double shift, double scale)
+  {
+    throw IRISException("WriteAsFloat unsupported for class %s",
                         image->GetNameOfClass());
   }
 
@@ -864,33 +870,9 @@ ImageWrapper<TTraits,TBase>
   double tol = 1e-5;
   bool same_geom = CompareGeometry(image, referenceSpace, tol);
 
-  // Get the transform matrix and offset
-  // TODO: this is silly and unnecessary. We should always use one Transform class
-  typedef itk::MatrixOffsetTransformBase<double, 3, 3> TransformBase;
-  TransformBase *tb = dynamic_cast<TransformBase *>(transform);
-  typename TransformBase::MatrixType matrix;
-  typename TransformBase::OffsetType offset;
-  matrix.SetIdentity();
-  offset.Fill(0.0);
-  if(tb)
-    {
-    matrix = tb->GetMatrix();
-    offset = tb->GetOffset();
-    }
+  // Use helper class to check for identity
+  bool is_identity = AffineTransformHelper::IsIdentity(transform);
 
-  // Check if transform is identity.
-  bool is_identity = true;
-
-  for(int i = 0; i < 3; i++)
-    {
-    if(fabs(offset[i]) > tol)
-      is_identity = false;
-    for(int j = 0; j < 3; j++)
-      {
-      if(fabs(matrix(i,j) - (i==j ? 1.0 : 0.0)) > tol)
-        is_identity = false;
-      }
-    }
 
   return same_geom && is_identity;
 }
@@ -1519,55 +1501,14 @@ ImageWrapper<TTraits, TBase>
   *this->m_IOHints = io_hints;
 }
 
-// The method that can be called for some wrappers, not others
-template <class TImage>
-static void DoWriteImage(TImage *image, const char *fname, Registry &hints)
+template<class TTraits, class TBase>
+void
+ImageWrapper<TTraits,TBase>
+::WriteToFileInInternalFormat(const char *filename, Registry &hints)
 {
-  SmartPtr<GuidedNativeImageIO> io = GuidedNativeImageIO::New();
-  io->CreateImageIO(fname, hints, false);
-  itk::ImageIOBase *base = io->GetIOBase();
-
-  typedef itk::ImageFileWriter<TImage> WriterType;
-  typename WriterType::Pointer writer = WriterType::New();
-  writer->SetFileName(fname);
-  if(base)
-    writer->SetImageIO(base);
-  writer->SetInput(image);
-  writer->Update();
+  typedef ImageWrapperPartialSpecializationTraits<ImageType> Specialization;
+  Specialization::Write(m_Image, filename, hints);
 }
-
-template<class TImage>
-class ImageWrapperWriteTraits
-{
-public:
-  static void Write(TImage *image, const char *fname, Registry &hints)
-  {
-    throw IRISException("FillBuffer unsupported for class %s",
-                        image->GetNameOfClass());
-  }
-};
-
-template<class TPixel, unsigned int VDim>
-class ImageWrapperWriteTraits< itk::Image<TPixel, VDim> >
-{
-public:
-  typedef itk::Image<TPixel, VDim> ImageType;
-  static void Write(ImageType *image, const char *fname, Registry &hints)
-  {
-    DoWriteImage(image, fname, hints);
-  }
-};
-
-template<class TPixel, unsigned int VDim>
-class ImageWrapperWriteTraits< itk::VectorImage<TPixel, VDim> >
-{
-public:
-  typedef itk::VectorImage<TPixel, VDim> ImageType;
-  static void Write(ImageType *image, const char *fname, Registry &hints)
-  {
-    DoWriteImage(image, fname, hints);
-  }
-};
 
 
 template<class TTraits, class TBase>
@@ -1575,9 +1516,17 @@ void
 ImageWrapper<TTraits,TBase>
 ::WriteToFile(const char *filename, Registry &hints)
 {
-  // Do the actual writing
-  typedef ImageWrapperPartialSpecializationTraits<ImageType> Specialization;
-  Specialization::Write(m_Image, filename, hints);
+  // What kind of mapping are we using
+  if(this->GetNativeMapping().IsIdentity())
+    {
+    // Do the actual writing
+    this->WriteToFileInInternalFormat(filename, hints);
+    }
+  else
+    {
+    // The image should be converted to float before writing it
+    this->WriteToFileAsFloat(filename, hints);
+    }
 
   // Store the filename
   m_FileName = itksys::SystemTools::GetFilenamePath(filename);
@@ -1641,15 +1590,46 @@ struct RemoveTransparencyFunctor
 };
 
 template<class TTraits, class TBase>
-void
+typename ImageWrapper<TTraits,TBase>::DisplaySlicePointer
 ImageWrapper<TTraits,TBase>
-::WriteThumbnail(const char *file, unsigned int maxdim)
+::MakeThumbnail(unsigned int maxdim)
 {
+  // For images with extreme aspect ratios (greater than 1:2) we
+  // choose the direction in which the aspect ratio is closest to
+  // one. Otherwise, we choose the axial direction.
+  double aspect_ratio[3];
+  for(int i = 0; i < 3; i++)
+    {
+    // Get the slice
+    DisplaySliceType *slice = this->GetDisplaySlice(2);
+
+    // The size of the slice
+    Vector2ui slice_dim = slice->GetBufferedRegion().GetSize();
+
+    // The physical extents of the slice
+    Vector2d slice_extent(slice->GetSpacing()[0] * slice_dim[0],
+                          slice->GetSpacing()[1] * slice_dim[1]);
+
+    // The aspect ratio of the slice
+    if(slice_extent[0] < slice_extent[1])
+      aspect_ratio[i] = slice_extent[0] / slice_extent[1];
+    else
+      aspect_ratio[i] = slice_extent[1] / slice_extent[0];
+    }
+
+  // Choose which aspect ratio to use
+  int thumb_axis = -1;
+  if(aspect_ratio[2] >= 0.5 || (aspect_ratio[2] > aspect_ratio[0] && aspect_ratio[2] > aspect_ratio[1]))
+    thumb_axis = 2;
+  else if(aspect_ratio[1] > aspect_ratio[0] && aspect_ratio[1] > aspect_ratio[2])
+    thumb_axis = 1;
+  else
+    thumb_axis = 0;
+
   // Get the display slice
   // For now, just use the z-axis for exporting the thumbnails
-  DisplaySliceType *slice = this->GetDisplaySlice(2);
+  DisplaySliceType *slice = this->GetDisplaySlice(thumb_axis);
   slice->GetSource()->UpdateLargestPossibleRegion();
-  // slice->Update();
 
   // The size of the slice
   Vector2ui slice_dim = slice->GetBufferedRegion().GetSize();
@@ -1704,12 +1684,10 @@ ImageWrapper<TTraits,TBase>
   SmartPtr<OpaqueFilter> opaquer = OpaqueFilter::New();
   opaquer->SetInput(flipper->GetOutput());
 
-  // Write a PNG file
-  typedef typename itk::ImageFileWriter<DisplaySliceType> WriterType;
-  SmartPtr<WriterType> writer = WriterType::New();
-  writer->SetInput(opaquer->GetOutput());
-  writer->SetFileName(file);
-  writer->Update();
+  // Return the result
+  opaquer->Update();
+  DisplaySlicePointer result = opaquer->GetOutput();
+  return result;
 }
 
 template<class TTraits, class TBase>
@@ -1724,6 +1702,7 @@ ImageWrapper<TTraits,TBase>
   reg["Alpha"] << m_Alpha;
   reg["Sticky"] << m_Sticky;
   reg["CustomNickName"] << m_CustomNickname;
+  reg["Tags"].PutList(m_Tags);
 }
 
 template<class TTraits, class TBase>
@@ -1738,6 +1717,7 @@ ImageWrapper<TTraits,TBase>
   this->SetAlpha(reg["Alpha"][m_Alpha]);
   this->SetSticky(reg["Sticky"][m_Sticky]);
   this->SetCustomNickname(reg["CustomNickName"][m_CustomNickname]);
+  reg["Tags"].GetList(m_Tags);
 }
 
 template<class TTraits, class TBase>

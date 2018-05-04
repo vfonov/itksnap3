@@ -9,6 +9,8 @@
 namespace itk
 {
 template <class TPixel, unsigned int VDim> class Image;
+template <class TPixel> class RGBAPixel;
+class Command;
 }
 
 class Registry;
@@ -52,6 +54,11 @@ public:
   /** Set the progress value between 0 and 1 */
   virtual void SetProgressValue(double) = 0;
 
+  /** For convenience, the delegate can be hooked up to an ITK command */
+  void ProgressCallback(itk::Object *source, const itk::EventObject &event);
+
+  /** Create a command that will call this delegate */
+  SmartPtr<itk::Command> CreateCommand();
 
 
 };
@@ -89,12 +96,19 @@ class SystemInfoDelegate
 public:
   virtual std::string GetApplicationDirectory() = 0;
   virtual std::string GetApplicationFile() = 0;
-
   virtual std::string GetApplicationPermanentDataLocation() = 0;
+  virtual std::string GetUserDocumentsLocation() = 0;
+
+  virtual std::string EncodeServerURL(const std::string &url) = 0;
 
   typedef itk::Image<unsigned char, 2> GrayscaleImage;
+  typedef itk::RGBAPixel<unsigned char> RGBAPixelType;
+  typedef itk::Image<RGBAPixelType, 2> RGBAImageType;
+
   virtual void LoadResourceAsImage2D(std::string tag, GrayscaleImage *image) = 0;
   virtual void LoadResourceAsRegistry(std::string tag, Registry &reg) = 0;
+
+  virtual void WriteRGBAImage2D(std::string file, RGBAImageType *image) = 0;
 };
 
 #endif // UIREPORTERDELEGATES_H

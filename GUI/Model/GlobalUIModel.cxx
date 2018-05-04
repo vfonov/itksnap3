@@ -70,6 +70,7 @@
 #include "InterpolateLabelModel.h"
 #include "RegistrationModel.h"
 #include "InteractiveRegistrationModel.h"
+#include "DistributedSegmentationModel.h"
 
 #include <itksys/SystemTools.hxx>
 
@@ -103,6 +104,10 @@ GlobalUIModel::GlobalUIModel()
   // Registration model
   m_RegistrationModel = RegistrationModel::New();
   m_RegistrationModel->SetParentModel(this);
+
+  // Distributed segmentation model
+  m_DistributedSegmentationModel = DistributedSegmentationModel::New();
+  m_DistributedSegmentationModel->SetParentModel(this);
 
   // Create the slice models
   for (unsigned int i = 0; i < 3; i++)
@@ -345,7 +350,7 @@ bool GlobalUIModel::CheckState(UIState state)
     case UIF_MESH_SAVEABLE:
       break;
     case UIF_OVERLAY_LOADED:
-      return m_Driver->GetCurrentImageData()->IsOverlayLoaded();
+      return m_Driver->GetCurrentImageData()->AreOverlaysLoaded();
     case UIF_SNAKE_MODE:
       return m_Driver->IsSnakeModeActive();
     case UIF_LEVEL_SET_ACTIVE:
@@ -361,6 +366,8 @@ bool GlobalUIModel::CheckState(UIState state)
 
       return n > 1;
       }
+    case UIF_MULTIPLE_SEGMENTATION_LAYERS:
+      return m_Driver->GetCurrentImageData()->GetNumberOfLayers(LABEL_ROLE) > 1;
     }
 
   return false;
@@ -455,12 +462,12 @@ void GlobalUIModel::SetGlobalDisplaySettings(
   // Update the global display settings
   m_GlobalDisplaySettings->DeepCopy(settings);
 
+  // Update the RAI codes in all slice views
+  m_Driver->SetDisplayGeometry(IRISDisplayGeometry(raiNew[0], raiNew[1], raiNew[2]));
+
   // React to the change in RAI codes
   if(raiOld[0] != raiNew[0] || raiOld[1] != raiNew[1] || raiOld[2] != raiNew[2])
     {
-    // Update the RAI codes in all slice views
-    m_Driver->SetDisplayGeometry(IRISDisplayGeometry(raiNew[0], raiNew[1], raiNew[2]));
-
     // Update the cursor location
     if(m_Driver->IsMainImageLoaded())
       {
@@ -532,27 +539,35 @@ void GlobalUIModel::LoadUserPreferences()
   m_SynchronizationModel->SetSyncPan(dbs->GetSyncPan());
   m_Model3D->SetContinuousUpdate(dbs->GetContinuousMeshUpdate());
   m_Driver->GetGlobalState()->SetSliceViewLayerLayout(dbs->GetOverlayLayout());
+
+  // Read the DSS-related preferences
+  m_DistributedSegmentationModel->LoadPreferences(
+        si->Folder("DistributedSegmentationSystem"));
 }
 
 void GlobalUIModel::SaveUserPreferences()
 {
   SystemInterface *si = m_Driver->GetSystemInterface();
 
-  // Read the appearance settings
+  // Write the appearance settings
   m_AppearanceSettings->SaveToRegistry(
         si->Folder("UserInterface.Appearance"));
 
-  // Read the default behaviors
+  // Write the default behaviors
   m_Driver->GetGlobalState()->GetDefaultBehaviorSettings()->WriteToRegistry(
         si->Folder("UserInterface.DefaultBehavior"));
 
-  // Read the global display properties
+  // Write the global display properties
   m_GlobalDisplaySettings->WriteToRegistry(
         si->Folder("SliceView.DisplaySettings"));
 
-  // Read the 3D mesh options
+  // Write the 3D mesh options
   m_Driver->GetGlobalState()->GetMeshOptions()->WriteToRegistry(
         si->Folder("View3D.MeshOptions"));
+
+  // Write the DSS-related preferences
+  m_DistributedSegmentationModel->SavePreferences(
+        si->Folder("DistributedSegmentationSystem"));
 
   // Save the preferences
   si->SaveUserPreferences();
@@ -720,6 +735,31 @@ GlobalUIModel::GetSegmentationOpacityValueAndRange(
 void GlobalUIModel::SetSegmentationOpacityValue(int value)
 {
   m_Driver->GetGlobalState()->SetSegmentationAlpha(value / 100.0);
+}
+
+void GlobalUIModel::CycleSelectedSegmentationLayer(int direction)
+{
+  // Get all the segmentation ids into a list and find the index of the current layer
+  LayerIterator it = m_Driver->GetCurrentImageData()->GetLayers(LABEL_ROLE);
+  std::vector<unsigned long> id_vec;
+  int cur_idx = -1;
+  for(; !it.IsAtEnd(); ++it)
+    {
+    id_vec.push_back(it.GetLayer()->GetUniqueId());
+    if(it.GetLayer()->GetUniqueId()
+       == m_Driver->GetGlobalState()->GetSelectedSegmentationLayerId())
+      cur_idx = id_vec.size() - 1;
+    }
+
+  // There must be at least two layers
+  if(id_vec.size() > 0)
+    {
+    // Select the new index
+    int index = (cur_idx < 0) ? 0 : (cur_idx + direction) % (int) id_vec.size();
+    if(index < 0)
+      index += id_vec.size();
+    m_Driver->GetGlobalState()->SetSelectedSegmentationLayerId(id_vec[index]);
+    }
 }
 
 

@@ -75,6 +75,7 @@ class ImageWrapperBase;
 class ColorLabelQuickListModel;
 class InterpolateLabelModel;
 class RegistrationModel;
+class DistributedSegmentationModel;
 
 namespace itk
 {
@@ -246,6 +247,9 @@ public:
   /** Model for image registration */
   irisGetMacro(RegistrationModel, RegistrationModel *)
 
+  /** Model for distributed image segmentation */
+  irisGetMacro(DistributedSegmentationModel, DistributedSegmentationModel *)
+
   /**
     Check the state of the system. This class will issue StateChangeEvent()
     when one of the flags has changed. This method can be used together with
@@ -324,6 +328,10 @@ public:
 
   /** Auto-adjust contrast in all image layers */
   void ResetContrastAllLayers();
+
+  /** A function for switching between segmentation layers when there multiple */
+  void CycleSelectedSegmentationLayer(int direction);
+
 
 protected:
 
@@ -421,6 +429,9 @@ protected:
   // Model for image registration
   SmartPtr<RegistrationModel> m_RegistrationModel;
 
+  // Model for DSS
+  SmartPtr<DistributedSegmentationModel> m_DistributedSegmentationModel;
+
   // Current coordinates of the cursor
   SmartPtr<AbstractRangedUIntVec3Property> m_CursorPositionModel;
   bool GetCursorPositionValueAndRange(
@@ -465,6 +476,7 @@ protected:
   // Callbacks for the opacity model
   bool GetSegmentationOpacityValueAndRange(int &value, NumericValueRange<int> *domain);
   void SetSegmentationOpacityValue(int value);
+
 
 };
 

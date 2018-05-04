@@ -33,13 +33,11 @@
 
 =========================================================================*/
 
-template<typename TPixel>
-unsigned long 
-UndoDataManager<TPixel>::Delta::m_UniqueIDCounter = 0;
+template<typename TPixel> unsigned long UndoDelta<TPixel>::m_UniqueIDCounter = 0;
 
 template<typename TPixel>
-UndoDataManager<TPixel>::Delta
-::Delta()
+UndoDelta<TPixel>
+::UndoDelta()
 {
   m_CurrentLength = 0;
   m_UniqueID = m_UniqueIDCounter++;
@@ -47,7 +45,7 @@ UndoDataManager<TPixel>::Delta
 
 template<typename TPixel>
 void
-UndoDataManager<TPixel>::Delta
+UndoDelta<TPixel>
 ::Encode(const TPixel &value)
 {
   if(m_CurrentLength == 0)
@@ -69,7 +67,7 @@ UndoDataManager<TPixel>::Delta
 
 template<typename TPixel>
 void
-UndoDataManager<TPixel>::Delta
+UndoDelta<TPixel>
 ::FinishEncoding()
 {
   if(m_CurrentLength > 0)
@@ -77,9 +75,9 @@ UndoDataManager<TPixel>::Delta
 }
 
 template<typename TPixel>
-typename UndoDataManager<TPixel>::Delta &
-UndoDataManager<TPixel>::Delta
-::operator = (const Delta &other)
+UndoDelta<TPixel> &
+UndoDelta<TPixel>
+::operator = (const UndoDelta<TPixel> &other)
 {
   m_Array = other.m_Array;
   m_CurrentLength = other.m_CurrentLength;

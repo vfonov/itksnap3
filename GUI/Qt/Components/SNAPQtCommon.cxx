@@ -15,6 +15,7 @@
 #include <QGraphicsItem>
 #include <QGraphicsScene>
 #include <QGraphicsDropShadowEffect>
+#include <QDateTime>
 
 
 #include "QtCursorOverride.h"
@@ -525,7 +526,8 @@ QMap<QString, QDir> g_CategoryToLastPathMap;
 QString GetFileDialogPath(GlobalUIModel *model, const char *HistoryName)
 {
   // Already have something for this category? Then use it
-  if(g_CategoryToLastPathMap.find(HistoryName) != g_CategoryToLastPathMap.end())
+  if(HistoryName && strlen(HistoryName) > 0 &&
+     g_CategoryToLastPathMap.find(HistoryName) != g_CategoryToLastPathMap.end())
     return g_CategoryToLastPathMap[HistoryName].absolutePath();
 
   // Is there a main image loaded
@@ -549,7 +551,8 @@ QString GetFileDialogPath(GlobalUIModel *model, const char *HistoryName)
 
 void UpdateFileDialogPathForCategory(const char *HistoryName, QString dir)
 {
-  g_CategoryToLastPathMap[HistoryName] = QDir(dir);
+  if(HistoryName && strlen(HistoryName) > 0)
+    g_CategoryToLastPathMap[HistoryName] = QDir(dir);
 }
 
 void TranslateStringTooltipKeyModifiers(QString &tooltip)
@@ -580,4 +583,13 @@ void TranslateChildTooltipKeyModifiers(QWidget *parent)
     TranslateStringTooltipKeyModifiers(tooltip);
     child->setToolTip(tooltip);
     }
+}
+
+QString get_user_friendly_date_string(const QDateTime &dt)
+{
+  QDateTime dt_local = dt.toTimeSpec(Qt::LocalTime);
+  int date_diff = abs(QDateTime::currentDateTime().daysTo(dt_local));
+  QString t_date = dt_local.toString(
+                     date_diff == 0 ? "hh:mm" : date_diff <= 365 ? "MMM d hh:mm" : "MMM d yyyy hh:mm");
+  return t_date;
 }

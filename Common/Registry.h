@@ -169,6 +169,12 @@ public:
     return true;
   }
 
+  TEnum GetEnumValueWithDefault(const StringType &key, TEnum defaultValue) const
+  {
+    TEnum retval;
+    return GetEnumValue(key, retval) ? retval : defaultValue;
+  }
+
   bool GetString(TEnum value, StringType &outString) const
   {
     typename std::map<TEnum, StringType>::const_iterator it = m_EnumToStringMap.find(value);
@@ -181,6 +187,17 @@ public:
 
   unsigned int Size() const { return m_EnumToStringMap.size(); }
   StringType operator [] (TEnum value) { return m_EnumToStringMap[value]; }
+
+  /** Default constructor */
+  RegistryEnumMap() {}
+
+  /** Constructor for enums that start at zero - must terminate with NULL */
+  RegistryEnumMap(const char *init[])
+  {
+    for(int i = 0; init[i] != NULL; i++)
+      this->AddPair((TEnum) i, init[i]);
+  }
+
 private:
   std::map<TEnum, StringType> m_EnumToStringMap;
   std::map<StringType, TEnum> m_StringToEnumMap;
@@ -308,7 +325,58 @@ public:
     else return defaultValue;
   }
 
+  /**
+   * Put a list of entries of a given type. The list will be stored in the registry file as a
+   * comma-separated string of values.
+   */
+  template <class T> void PutList(const std::list<T> &items)
+  {
+    this->PutContainer(items);
+  }
+
+  template <class T> void GetList(std::list<T> &items)
+  {
+    this->GetContainer(items);
+  }
+
+
 private:
+
+  template <class TContainer> void PutContainer(const TContainer &c)
+  {
+    // Add all the items in the container
+    std::ostringstream oss;
+    for(typename TContainer::const_iterator it = c.begin(); it != c.end(); ++it)
+      {
+      if(it != c.begin())
+        oss << ",";
+      oss << (*it);
+      }
+
+    // Set the string
+    m_String = oss.str();
+    m_Null = false;
+  }
+
+  template <class TContainer> TContainer GetContainer(TContainer &c)
+  {
+    c.clear();
+    typename TContainer::value_type value;
+    if(!m_Null)
+      {
+      std::istringstream iss(m_String);
+      std::string tag;
+      while(getline(iss,tag,','))
+        {
+        std::istringstream iss_tag(tag);
+        iss_tag >> value;
+        c.push_back(value);
+        }
+      }
+    return c;
+  }
+
+
   std::string m_String;
   bool m_Null;
 };

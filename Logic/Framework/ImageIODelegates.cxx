@@ -209,17 +209,16 @@ LoadSegmentationImageDelegate
 ImageWrapperBase *LoadSegmentationImageDelegate::UpdateApplicationWithImage(GuidedNativeImageIO *io)
 {
   if(m_Driver->IsSnakeModeActive())
-    m_Driver->UpdateSNAPSegmentationImage(io);
+    return m_Driver->UpdateSNAPSegmentationImage(io);
   else
-    m_Driver->UpdateIRISSegmentationImage(io);
-
-  return m_Driver->GetCurrentImageData()->GetSegmentation();
+    return m_Driver->UpdateIRISSegmentationImage(io, this->GetMetaDataRegistry(), m_AdditiveMode);
 }
 
 LoadSegmentationImageDelegate::LoadSegmentationImageDelegate()
 {
   this->m_HistoryName = "LabelImage";
   this->m_DisplayName = "Segmentation Image";
+  this->m_AdditiveMode = false;
 }
 
 void
@@ -252,6 +251,25 @@ void DefaultSaveImageDelegate::AddHistoryName(const std::string &histname)
 const char *DefaultSaveImageDelegate::GetHistoryName()
 {
   return m_HistoryNames.front().c_str();
+}
+
+void DefaultSaveImageDelegate
+::ValidateBeforeSaving(
+    const std::string &fname, GuidedNativeImageIO *io, IRISWarningList &wl)
+{
+  if(!m_Wrapper->GetNativeIntensityMapping()->IsIdentity()
+     && strlen(m_Wrapper->GetFileName()) > 0)
+    {
+    // if the wrapper uses a non-identity native mapping, then there will be loss of
+    // precision relative to the input image
+    wl.push_back(
+          IRISWarning(
+            "Warning: Loss of Precision."
+            "ITK-SNAP represents images using 16-bit precision. The image you are saving "
+            "was previously loaded from an image file that used greater than 16-bit precision. "
+            "Voxel intensities may be changed in the saved image relative to the original image."
+            ));
+    }
 }
 
 

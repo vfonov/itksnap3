@@ -1,9 +1,7 @@
-FIND_PACKAGE(CURL)
+# Add the exe for the workspace tool
+ADD_EXECUTABLE(itksnap-wt WorkspaceTool.cxx)
+TARGET_LINK_LIBRARIES(itksnap-wt itksnaplogic ${ITK_LIBRARIES} ${CURL_LIBRARIES})
 
-IF(CURL_FOUND)
-  INCLUDE_DIRECTORIES(${CURL_INCLUDE_DIR})
-ENDIF(CURL_FOUND)
-
-ADD_EXECUTABLE(itksnap_ws WorkspaceTool.cxx)
-TARGET_LINK_LIBRARIES(itksnap_ws itksnaplogic ${ITK_LIBRARIES} ${CURL_LIBRARIES})
+# Install the workspace tool
+INSTALL(TARGETS itksnap-wt DESTINATION ${SNAP_CLI_INSTALL_PATH} COMPONENT Runtime)
 

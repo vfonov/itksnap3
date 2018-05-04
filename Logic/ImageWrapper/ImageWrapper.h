@@ -512,6 +512,15 @@ public:
   virtual void SetCustomNickname(const std::string &nickname) ITK_OVERRIDE;
   irisGetMacroWithOverride(CustomNickname, const std::string &);
 
+
+  /**
+   * Access the tags for this image layer. Tags are just strings assigned to the
+   * layer that may be useful to other software
+   */
+  irisGetMacroWithOverride(Tags, const std::list<std::string> &)
+  irisSetMacroWithOverride(Tags, const std::list<std::string> &)
+
+
   /**
    * Access the "IO hints" registry associated with this wrapper. The IO hints
    * are used to help read the image when the filename alone is not sufficient.
@@ -533,7 +542,7 @@ public:
   /**
    * Create a thumbnail from the image and write it to a .png file
    */
-  void WriteThumbnail(const char *filename, unsigned int maxdim) ITK_OVERRIDE;
+  DisplaySlicePointer MakeThumbnail(unsigned int maxdim) ITK_OVERRIDE;
 
   /**
    * Save metadata to a Registry file. The metadata are data that are not
@@ -659,6 +668,9 @@ protected:
   // - if there is no filename, nickname is set to the default nickname
   std::string m_DefaultNickname, m_CustomNickname;
 
+  // Tags for this image layer
+  std::list<std::string> m_Tags;
+
   // A map to store user-associated data
   typedef std::map<std::string, SmartPtr<itk::Object> > UserDataMapType;
   UserDataMapType m_UserDataMap;
@@ -715,6 +727,9 @@ protected:
 
   // Update the orthogonal and/or non-orthogonal slicing pipelines
   void UpdateSlicingPipelines(ImageType *image, ImageBaseType *referenceSpace, ITKTransformType *transform);
+
+  /** Write the image to disk with whatever the internal format is */
+  virtual void WriteToFileInInternalFormat(const char *filename, Registry &hints) ITK_OVERRIDE;
 };
 
 #endif // __ImageWrapper_h_

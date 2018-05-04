@@ -284,7 +284,7 @@ PaintbrushModel
     // If the mouse is being released, we need to commit the drawing
     if(release)
       {
-      driver->GetCurrentImageData()->StoreUndoPoint("Drawing with paintbrush");
+      driver->GetSelectedSegmentationLayer()->StoreUndoPoint("Drawing with paintbrush");
       driver->RecordCurrentLabelUse();
 
       // TODO: this is ugly. The code for applying a brush should really be
@@ -326,7 +326,7 @@ void PaintbrushModel::AcceptAtCursor()
   ApplyBrush(false, false);
 
   // We need to commit the drawing
-  driver->GetCurrentImageData()->StoreUndoPoint("Drawing with paintbrush");
+  driver->GetSelectedSegmentationLayer()->StoreUndoPoint("Drawing with paintbrush");
   driver->RecordCurrentLabelUse();
 
   // TODO: this is ugly. The code for applying a brush should really be
@@ -343,7 +343,7 @@ PaintbrushModel::ApplyBrush(bool reverse_mode, bool dragging)
   GenericImageData *gid = driver->GetCurrentImageData();
 
   // Get the segmentation image
-  LabelImageWrapper *imgLabel = driver->GetCurrentImageData()->GetSegmentation();
+  LabelImageWrapper *imgLabel = driver->GetSelectedSegmentationLayer();
 
   // Get the paint properties
   LabelType drawing_color = gs->GetDrawingColorLabel();
@@ -391,7 +391,7 @@ PaintbrushModel::ApplyBrush(bool reverse_mode, bool dragging)
     // Precompute the watersheds
     m_Watershed->PrecomputeWatersheds(
           context_layer->GetDefaultScalarRepresentation()->GetCommonFormatImage(),
-          driver->GetCurrentImageData()->GetSegmentation()->GetImage(),
+          driver->GetSelectedSegmentationLayer()->GetImage(),
           xTestRegion, to_itkIndex(m_MousePosition), pbs.watershed.smooth_iterations);
 
     m_Watershed->RecomputeWatersheds(pbs.watershed.level);
@@ -444,7 +444,7 @@ PaintbrushModel::ApplyBrush(bool reverse_mode, bool dragging)
     return false;
 
   // Send the delta for undo
-  gid->StoreIntermediateUndoDelta(it_update.RelinquishDelta());
+  imgLabel->StoreIntermediateUndoDelta(it_update.RelinquishDelta());
 
   // Changes were made
   return true;

@@ -39,6 +39,8 @@
 #include "VectorImageWrapper.h"
 #include "ScalarImageHistogram.h"
 #include "ThreadedHistogramImageFilter.h"
+#include "GuidedNativeImageIO.h"
+#include "itkImageFileWriter.h"
 
 #include "vtkImageImport.h"
 
@@ -369,15 +371,24 @@ ScalarImageWrapper<TTraits, TBase>
     const itk::Index<3> &startIdx, long runlength,
     double *out_sum, double *out_sumsq) const
 {
-  ConstIterator it(this->m_Image, region);
-  it.SetIndex(startIdx);
-
-  // Perform the integration
-  for(long q = 0; q < runlength; q++, ++it)
+  if(this->IsSlicingOrthogonal())
     {
-    double p = (double) it.Get();
-    *out_sum += p;
-    *out_sumsq += p * p;
+    ConstIterator it(this->m_Image, region);
+    it.SetIndex(startIdx);
+
+    // Perform the integration
+    for(long q = 0; q < runlength; q++, ++it)
+      {
+      double p = (double) it.Get();
+      *out_sum += p;
+      *out_sumsq += p * p;
+      }
+    }
+  else
+    {
+    // TODO: implement non-orthogonal statistics
+    *out_sum += nan("");
+    *out_sumsq += nan("");
     }
 }
 
@@ -392,12 +403,15 @@ ScalarImageWrapper<TTraits,TBase>
     vnl_vector<double> &out_value, DisplayPixelType &out_appearance)
 {
   // Look up the actual intensity of the voxel from the slicer
+  typename SlicerType::OutputPixelType pix_raw =
+      this->m_Slicer[0]->LookupIntensityAtSliceIndex(this->m_ReferenceSpace);
+
+  // The display value is mapped to native
   out_value.set_size(1);
-  out_value[0] = this->m_NativeMapping(
-                   this->m_Slicer[0]->LookupIntensityAtSliceIndex(this->m_ReferenceSpace));
+  out_value[0] = this->m_NativeMapping(pix_raw);
 
   // Use the display mapping to map to display pixel
-  out_appearance = this->m_DisplayMapping->MapPixel(out_value[0]);
+  out_appearance = this->m_DisplayMapping->MapPixel(pix_raw);
 }
 
 //template<class TTraits, class TBase>
@@ -484,6 +498,26 @@ ScalarImageWrapper<TTraits,TBase>
 
   m_HistogramFilter->Update();
   return m_HistogramFilter->GetHistogramOutput();
+}
+
+template<class TTraits, class TBase>
+void
+ScalarImageWrapper<TTraits, TBase>
+::WriteToFileAsFloat(const char *fname, Registry &hints)
+{
+  SmartPtr<GuidedNativeImageIO> io = GuidedNativeImageIO::New();
+  io->CreateImageIO(fname, hints, false);
+  itk::ImageIOBase *base = io->GetIOBase();
+
+  SmartPtr<FloatImageSource> pipeline = this->CreateCastToFloatPipeline();
+
+  typedef itk::ImageFileWriter<FloatImageType> WriterType;
+  SmartPtr<WriterType> writer = WriterType::New();
+  writer->SetFileName(fname);
+  if(base)
+    writer->SetImageIO(base);
+  writer->SetInput(pipeline->GetOutput());
+  writer->Update();
 }
 
 

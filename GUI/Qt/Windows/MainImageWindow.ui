@@ -191,7 +191,7 @@ QTextBrowser {
                   <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
-&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'.Helvetica Neue DeskInterface'; font-size:13px; font-weight:400; font-style:normal;&quot;&gt;
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'.SF NS Text'; font-size:13px; font-weight:400; font-style:normal;&quot;&gt;
 &lt;p style=&quot;-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px; font-family:'Lucida Grande'; font-size:13pt;&quot;&gt;&lt;br /&gt;&lt;/p&gt;
 &lt;ul style=&quot;margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;&quot;&gt;&lt;li style=&quot; font-family:'Lucida Grande'; font-size:13pt;&quot; style=&quot; margin-top:12px; margin-bottom:4px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:11px;&quot;&gt;Learn about the &lt;/span&gt;&lt;a href=&quot;http://www.itksnap.org/pmwiki/pmwiki.php?n=Documentation.NewFeaturesVersion30&quot;&gt;&lt;span style=&quot; font-size:11px; text-decoration: underline; color:#0000ff;&quot;&gt;new features&lt;/span&gt;&lt;/a&gt;&lt;span style=&quot; font-size:11px;&quot;&gt; in this version&lt;/span&gt;&lt;/li&gt;
 &lt;li style=&quot; font-family:'Lucida Grande'; font-size:13pt;&quot; style=&quot; margin-top:0px; margin-bottom:4px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:11px;&quot;&gt;Read a &lt;/span&gt;&lt;a href=&quot;http://www.itksnap.org/pmwiki/pmwiki.php?n=Documentation.UpgradingTo30&quot;&gt;&lt;span style=&quot; font-size:11px; text-decoration: underline; color:#0000ff;&quot;&gt;quick transition guide&lt;/span&gt;&lt;/a&gt;&lt;span style=&quot; font-size:11px;&quot;&gt; for Version 2 users&lt;/span&gt;&lt;/li&gt;
@@ -462,13 +462,35 @@ color:rgb(103, 103, 103);
      <addaction name="actionRecentSeg_4"/>
      <addaction name="actionRecentSeg_5"/>
     </widget>
+    <widget class="QMenu" name="menuAddSegmentation">
+     <property name="title">
+      <string>Add Another Segmentation</string>
+     </property>
+     <widget class="QMenu" name="menuAddSegmentation_Recent">
+      <property name="title">
+       <string>Recent</string>
+      </property>
+      <addaction name="actionRecentAddSeg_1"/>
+      <addaction name="actionRecentAddSeg_2"/>
+      <addaction name="actionRecentAddSeg_3"/>
+      <addaction name="actionRecentAddSeg_4"/>
+      <addaction name="actionRecentAddSeg_5"/>
+     </widget>
+     <addaction name="actionAddSegmentation_New"/>
+     <addaction name="separator"/>
+     <addaction name="actionAddSegmentation_Open"/>
+     <addaction name="menuAddSegmentation_Recent"/>
+    </widget>
     <addaction name="actionLoad_from_Image"/>
     <addaction name="menuRecent_Segmentations"/>
+    <addaction name="separator"/>
+    <addaction name="menuAddSegmentation"/>
     <addaction name="separator"/>
     <addaction name="actionSaveSegmentation"/>
     <addaction name="actionSaveSegmentationAs"/>
     <addaction name="separator"/>
     <addaction name="actionClear"/>
+    <addaction name="actionClearActive"/>
     <addaction name="separator"/>
     <addaction name="actionSave_as_Mesh"/>
     <addaction name="separator"/>
@@ -527,6 +549,8 @@ color:rgb(103, 103, 103);
     <addaction name="actionReorient_Image"/>
     <addaction name="actionRegistration"/>
     <addaction name="separator"/>
+    <addaction name="actionDSS"/>
+    <addaction name="separator"/>
     <addaction name="actionInterpolate_Labels"/>
     <addaction name="separator"/>
     <addaction name="actionPreferences"/>
@@ -579,6 +603,9 @@ color:rgb(103, 103, 103);
      <addaction name="actionActivateNextLayer"/>
      <addaction name="actionActivatePreviousLayer"/>
      <addaction name="separator"/>
+     <addaction name="actionActivateNextSegmentationLayer"/>
+     <addaction name="actionActivatePreviousSegmentationLayer"/>
+     <addaction name="separator"/>
      <addaction name="actionOverlayVisibilityToggleAll"/>
      <addaction name="actionOverlayVisibilityIncreaseAll"/>
      <addaction name="actionOverlayVisibilityDecreaseAll"/>
@@ -607,6 +634,7 @@ color:rgb(103, 103, 103);
     </property>
     <addaction name="actionAbout"/>
     <addaction name="separator"/>
+    <addaction name="actionInstallCLI"/>
     <addaction name="actionCheck_for_Updates"/>
     <addaction name="separator"/>
     <addaction name="actionDocumentation_Home"/>
@@ -660,6 +688,9 @@ color:rgb(103, 103, 103);
   <action name="actionLoad_from_Image">
    <property name="text">
     <string>Open Segmentation ...</string>
+   </property>
+   <property name="toolTip">
+    <string>Load the segmentation image from disk</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+O</string>
@@ -1508,6 +1539,9 @@ color:rgb(103, 103, 103);
    <property name="toolTip">
     <string>Perform image registration</string>
    </property>
+   <property name="shortcut">
+    <string>Ctrl+R</string>
+   </property>
   </action>
   <action name="actionClose_Window">
    <property name="text">
@@ -1553,6 +1587,90 @@ color:rgb(103, 103, 103);
   <action name="actionRecentSeg_5">
    <property name="text">
     <string>Recent5</string>
+   </property>
+  </action>
+  <action name="actionActivateNextSegmentationLayer">
+   <property name="text">
+    <string>Activate Next Segmentation Layer</string>
+   </property>
+   <property name="shortcut">
+    <string>}</string>
+   </property>
+  </action>
+  <action name="actionActivatePreviousSegmentationLayer">
+   <property name="text">
+    <string>Activate Previous Segmentation Layer</string>
+   </property>
+   <property name="shortcut">
+    <string>{</string>
+   </property>
+  </action>
+  <action name="actionAddSegmentation_Open">
+   <property name="text">
+    <string>Open...</string>
+   </property>
+   <property name="toolTip">
+    <string>Add existing segmentation image to the workspace</string>
+   </property>
+  </action>
+  <action name="actionAddSegmentation_New">
+   <property name="text">
+    <string>New</string>
+   </property>
+   <property name="toolTip">
+    <string>Add another blank segmentation to the current workspace</string>
+   </property>
+  </action>
+  <action name="actionRecentAddSeg_1">
+   <property name="text">
+    <string>Recent1</string>
+   </property>
+   <property name="toolTip">
+    <string>Recent1</string>
+   </property>
+  </action>
+  <action name="actionRecentAddSeg_2">
+   <property name="text">
+    <string>Recent2</string>
+   </property>
+  </action>
+  <action name="actionRecentAddSeg_3">
+   <property name="text">
+    <string>Recent3</string>
+   </property>
+  </action>
+  <action name="actionRecentAddSeg_4">
+   <property name="text">
+    <string>Recent4</string>
+   </property>
+  </action>
+  <action name="actionRecentAddSeg_5">
+   <property name="text">
+    <string>Recent5</string>
+   </property>
+  </action>
+  <action name="actionClearActive">
+   <property name="text">
+    <string>Unload Active Segmentation</string>
+   </property>
+   <property name="toolTip">
+    <string>Unload the segmentation that is currently being edited</string>
+   </property>
+  </action>
+  <action name="actionInstallCLI">
+   <property name="text">
+    <string>Install Command-Line Tools ...</string>
+   </property>
+  </action>
+  <action name="actionDSS">
+   <property name="text">
+    <string>Distributed Segmentation Service...</string>
+   </property>
+   <property name="toolTip">
+    <string>Send images to external server for automated segmentation</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+D</string>
    </property>
   </action>
  </widget>

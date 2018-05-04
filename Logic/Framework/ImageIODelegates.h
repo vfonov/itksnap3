@@ -123,12 +123,20 @@ public:
 
   irisITKObjectMacro(LoadSegmentationImageDelegate, AbstractLoadImageDelegate)
 
+  irisGetSetMacro(AdditiveMode, bool)
+
   virtual void ValidateHeader(GuidedNativeImageIO *io, IRISWarningList &wl) ITK_OVERRIDE;
   virtual void ValidateImage(GuidedNativeImageIO *io, IRISWarningList &wl) ITK_OVERRIDE;
   void UnloadCurrentImage() ITK_OVERRIDE;
   ImageWrapperBase * UpdateApplicationWithImage(GuidedNativeImageIO *io) ITK_OVERRIDE;
 
 protected:
+  // TODO: this is probably a temporary band-aid. In some situations, we want to be
+  // able to load segmentation images as the one and only segmentation layer and in
+  // other situations we want to allow multiple segmentation layers to coexist. I am
+  // in the process of transitioning to multiple segmentations
+  bool m_AdditiveMode;
+
   LoadSegmentationImageDelegate();
   virtual ~LoadSegmentationImageDelegate() {}
 };
@@ -142,6 +150,10 @@ public:
 
   virtual void Initialize(IRISApplication *driver)
     { m_Driver = driver; m_SaveSuccessful = false; }
+
+  virtual void ValidateBeforeSaving(const std::string &fname,
+                                    GuidedNativeImageIO *io,
+                                    IRISWarningList &wl) = 0;
 
   virtual void SaveImage(
       const std::string &fname,
@@ -187,6 +199,10 @@ public:
   void AddHistoryName(const std::string &histname);
 
   virtual const char *GetHistoryName() ITK_OVERRIDE;
+
+  virtual void ValidateBeforeSaving(const std::string &fname,
+                                    GuidedNativeImageIO *io,
+                                    IRISWarningList &wl) ITK_OVERRIDE;
 
   virtual void SaveImage(
       const std::string &fname,

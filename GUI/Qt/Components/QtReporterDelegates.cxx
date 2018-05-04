@@ -10,8 +10,13 @@
 #include <QImage>
 #include "itkImage.h"
 #include "itkImageRegionIteratorWithIndex.h"
+#include "itkRGBAPixel.h"
 #include "Registry.h"
 #include <sstream>
+
+#include <QStandardPaths>
+#include <QUrl>
+
 
 #include "SNAPQtCommon.h"
 
@@ -63,10 +68,23 @@ float QtViewportReporter::GetViewportPixelRatio()
   return m_ClientWidget->devicePixelRatio();
 }
 
-#include <QStandardPaths>
 std::string QtSystemInfoDelegate::GetApplicationPermanentDataLocation()
 {
   return to_utf8(QStandardPaths::writableLocation(QStandardPaths::DataLocation));
+}
+
+std::string QtSystemInfoDelegate::GetUserDocumentsLocation()
+{
+  return to_utf8(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
+}
+
+std::string QtSystemInfoDelegate::EncodeServerURL(const std::string &url_string)
+{
+  QUrl url(from_utf8(url_string));
+  QByteArray ba = url.toEncoded(
+                    QUrl::RemoveScheme | QUrl::RemoveUserInfo | QUrl::StripTrailingSlash |
+                    QUrl::NormalizePathSegments | QUrl::FullyEncoded);
+  return std::string(ba.constData());
 }
 
 
@@ -121,7 +139,6 @@ void QtProgressReporterDelegate::SetProgressDialog(QProgressDialog *dialog)
   m_Dialog->setMaximum(1000);
   m_Dialog->setWindowModality(Qt::WindowModal);
   m_Dialog->setLabelText("ITK-SNAP progress");
-  m_Dialog->reset();
 }
 
 #include <QDebug>
@@ -185,4 +202,17 @@ void QtSystemInfoDelegate::LoadResourceAsRegistry(std::string tag, Registry &reg
     std::stringstream ss(ba.data());
     reg.ReadFromStream(ss);
     }
+}
+
+void QtSystemInfoDelegate::WriteRGBAImage2D(std::string file, RGBAImageType *image)
+{
+  RGBAImageType::SizeType sz = image->GetBufferedRegion().GetSize();
+  QImage iq(sz[0], sz[1], QImage::Format_ARGB32);
+  typedef itk::ImageRegionConstIteratorWithIndex<RGBAImageType> IterType;
+  for(IterType it(image, image->GetBufferedRegion()); !it.IsAtEnd(); ++it)
+    {
+    const RGBAPixelType &px = it.Value();
+    iq.setPixel(it.GetIndex()[0], it.GetIndex()[1], qRgba(px[0], px[1], px[2], px[3]));
+    }
+  iq.save(from_utf8(file));
 }

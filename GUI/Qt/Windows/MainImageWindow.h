@@ -55,6 +55,7 @@ class PreferencesDialog;
 class InterpolateLabelsDialog;
 class ImageIOWizard;
 class ImageIOWizardModel;
+class DistributedSegmentationDialog;
 
 class QTimer;
 
@@ -121,11 +122,19 @@ public:
   /** Check for updates (automatically at regular periods) */
   void UpdateAutoCheck();
 
+  // Save the segmentation (interactively or not). Return true if save was
+  // successful
+  bool SaveSegmentation(bool interactive);
+
+  /** Save the project (interactively or not) */
+  bool SaveWorkspace(bool interactive);
+
 public slots:
 
   void LoadRecentActionTriggered();
   void LoadRecentOverlayActionTriggered();
   void LoadRecentSegmentationActionTriggered();
+  void LoadAnotherRecentSegmentationActionTriggered();
   void LoadRecentProjectActionTriggered();
   void LoadAnotherDicomActionTriggered();
 
@@ -133,6 +142,17 @@ public slots:
   void onModelUpdate(const EventBucket &b);
 
   void externalStyleSheetFileChanged(const QString &file);
+
+
+  // Load image without interaction (used for recent/drop action).
+  void LoadMainImage(const QString &file);
+
+  // Load project without interaction (used for recent/drop action)
+  void LoadProject(const QString &file);
+
+  // Load project in a new ITK-SNAP window
+  void LoadProjectInNewInstance(const QString &file);
+
 
 private slots:
 
@@ -229,12 +249,6 @@ private slots:
 
   void UpdateCanvasDimensions();
 
-  // Load image without interaction (used for recent/drop action).
-  void LoadMainImage(const QString &file);
-
-  // Load project without interaction (used for recent/drop action)
-  void LoadProject(const QString &file);
-
   void onAnimationTimeout();
 
   void on_actionExportAxial_triggered();
@@ -297,6 +311,20 @@ private slots:
 
   void on_actionMainControlPanel_triggered();
 
+  void on_actionActivateNextSegmentationLayer_triggered();
+
+  void on_actionActivatePreviousSegmentationLayer_triggered();
+
+  void on_actionAddSegmentation_New_triggered();
+
+  void on_actionAddSegmentation_Open_triggered();
+
+  void on_actionClearActive_triggered();
+
+  void on_actionInstallCLI_triggered();
+
+  void on_actionDSS_triggered();
+
 protected:
 
   // bool eventFilter(QObject *obj, QEvent *event);
@@ -319,13 +347,6 @@ private:
   void UpdateSelectedLayerActions();
   void UpdateDICOMContentsMenu();
 
-  // Save the segmentation (interactively or not). Return true if save was
-  // successful
-  bool SaveSegmentation(bool interactive);
-
-  // Save the project (interactively or not)
-  bool SaveWorkspace(bool interactive);
-
   // Raise a dialog (equivalent to calling show, raise, activateWindow)
   void RaiseDialog(QDialog *dialog);
 
@@ -335,6 +356,9 @@ private:
   // Hookup check
   void HookupShortcutToAction(const QKeySequence &ks, QAction *action);
   void HookupSecondaryShortcutToAction(const QKeySequence &ks, QAction *action);
+
+  // Common method for loading recent segmentations (either open or add)
+  void LoadRecentSegmentation(QString file, bool additive);
 
   // For convenience, an array of the four panels (3 slice/1 3D)
   QWidget *m_ViewPanels[4];
@@ -384,6 +408,8 @@ private:
   InterpolateLabelsDialog *m_InterpolateLabelsDialog;
 
   RegistrationDialog *m_RegistrationDialog;
+
+  DistributedSegmentationDialog *m_DSSDialog;
 
   // A timer used to animate components
   QTimer *m_AnimateTimer;

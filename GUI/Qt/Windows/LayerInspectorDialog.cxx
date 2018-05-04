@@ -29,6 +29,7 @@
 #include "QtActionGroupCoupling.h"
 #include "DisplayLayoutModel.h"
 #include "QShortcut"
+#include <QKeyEvent>
 
 #include <QMenu>
 
@@ -71,6 +72,10 @@ LayerInspectorDialog::LayerInspectorDialog(QWidget *parent) :
   // used to hide and show controls (keep UI less busy) and to handle some
   // basic keyboard interaction.
   ui->saLayersContents->installEventFilter(this);
+
+  // Override default mapping of return key to the close button, which causes the dialog
+  // to close when we type enter inside of line edits
+  this->installEventFilter(new ReturnKeyEater(this));
 }
 
 LayerInspectorDialog::~LayerInspectorDialog()
@@ -167,9 +172,7 @@ void LayerInspectorDialog::GenerateModelsForLayers()
 {
   // Iterate over the layers for each class of displayed layers
   LayerIterator it = m_Model->GetDriver()->GetCurrentImageData()->GetLayers(
-        MAIN_ROLE |
-        OVERLAY_ROLE |
-        SNAP_ROLE);
+        MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE | LABEL_ROLE);
 
   for(; !it.IsAtEnd(); ++it)
     {
@@ -197,6 +200,7 @@ void LayerInspectorDialog::BuildLayerWidgetHierarchy()
     mapRoleNames[MAIN_ROLE] = "Main Image";
     mapRoleNames[OVERLAY_ROLE] = "Additional Images";
     mapRoleNames[SNAP_ROLE] = "Snake Mode Layers";
+    mapRoleNames[LABEL_ROLE] = "Segmentation Layers";
     }
 
   // Get the top-level layout in the pane
@@ -224,7 +228,7 @@ void LayerInspectorDialog::BuildLayerWidgetHierarchy()
 
   // Iterate over the layers for each class of displayed layers
   LayerIterator it = m_Model->GetDriver()->GetCurrentImageData()->GetLayers(
-        MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE);
+        MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE | LABEL_ROLE);
 
   // The current role and associated group box
   LayerRole currentRole = NO_ROLE;
@@ -380,7 +384,7 @@ void LayerInspectorDialog::SetActiveLayer(ImageWrapperBase *layer)
   m_Model->GetColorMapModel()->SetLayer(layer);
 
   m_Model->GetIntensityCurveModel()->SetLayer(
-        layer->GetDisplayMapping()->GetIntensityCurve() ? layer : NULL);
+        (layer && layer->GetDisplayMapping()->GetIntensityCurve()) ? layer : NULL);
 
   m_Model->GetImageInfoModel()->SetLayer(layer);
   m_Model->GetLayerGeneralPropertiesModel()->SetLayer(layer);
@@ -443,4 +447,16 @@ void LayerInspectorDialog::advanceTab()
 void LayerInspectorDialog::on_actionOpenLayer_triggered()
 {
   FindUpstreamAction(this, "actionAdd_Overlay")->trigger();
+}
+
+
+bool ReturnKeyEater::eventFilter(QObject *watched, QEvent *event)
+{
+  if(event->type() == QEvent::KeyPress)
+    {
+    QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
+    if(keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter)
+      return true;
+    }
+  return QObject::eventFilter(watched, event);
 }
