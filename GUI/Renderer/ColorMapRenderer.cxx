@@ -61,7 +61,7 @@ void ColorMapRenderer::paintGL()
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, boxw, boxw, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, boxarr);
-    delete boxarr;
+    delete[] boxarr;
     }
 
   // Draw the background pattern
@@ -171,20 +171,23 @@ void ColorMapRenderer::paintGL()
       {
       ColorMap::CMPoint p = cmap->GetCMPoint(i);
 
-
-      glColor3ub(p.m_RGBA[0][0],p.m_RGBA[0][1],p.m_RGBA[0][2]);
+      Vector3ui clrFill(p.m_RGBA[0][0],p.m_RGBA[0][1],p.m_RGBA[0][2]);
       bool select = m_Model->IsControlSelected(i, ColorMapLayerProperties::LEFT);
       gl_draw_circle_with_border(p.m_Index, p.m_RGBA[0][3] / 255.0, 5.0,
-                                 m_Width, m_Height,
-                                 select ? clrBorderSelect : clrBorderPlain);
+          1.2 / m_Width, 1.2 / m_Height,
+          clrFill, 255,
+          select ? clrBorderSelect : clrBorderPlain, 255,
+          20);
 
       if(p.m_RGBA[0][3] != p.m_RGBA[1][3])
         {
-        glColor3ub(p.m_RGBA[1][0],p.m_RGBA[1][1],p.m_RGBA[1][2]);
+        Vector3ui clrFill2(p.m_RGBA[1][0],p.m_RGBA[1][1],p.m_RGBA[1][2]);
         bool select = m_Model->IsControlSelected(i, ColorMapLayerProperties::RIGHT);
         gl_draw_circle_with_border(p.m_Index, p.m_RGBA[1][3] / 255.0, 5.0,
-                                   m_Width, m_Height,
-                                   select ? clrBorderSelect : clrBorderPlain);
+            1.2 / m_Width, 1.2 / m_Height,
+            clrFill2, 255,
+            select ? clrBorderSelect : clrBorderPlain, 255,
+            20);
         }
       }
     }

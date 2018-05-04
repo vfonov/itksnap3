@@ -23,33 +23,8 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 =========================================================================*/
+#include "SNAPEvents.h"
 
-#ifndef CROSSHAIRSRENDERER_H
-#define CROSSHAIRSRENDERER_H
-
-#include "SNAPCommon.h"
-#include "GenericSliceRenderer.h"
-
-class OrthogonalSliceCursorNavigationModel;
-class GenericSliceRenderer;
-
-class CrosshairsRenderer : public SliceRendererDelegate
-{
-public:
-
-  irisITKObjectMacro(CrosshairsRenderer, SliceRendererDelegate)
-
-  irisSetMacro(Model, OrthogonalSliceCursorNavigationModel *)
-  irisGetMacro(Model, OrthogonalSliceCursorNavigationModel *)
-
-  void paintGL() ITK_OVERRIDE;
-
-protected:
-
-  CrosshairsRenderer();
-  virtual ~CrosshairsRenderer() {}
-
-  OrthogonalSliceCursorNavigationModel *m_Model;
-};
-
-#endif // CROSSHAIRSRENDERER_H
+#ifdef SNAP_DEBUG_EVENTS
+bool flag_snap_debug_events = false;
+#endif
