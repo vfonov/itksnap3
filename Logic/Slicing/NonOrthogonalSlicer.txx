@@ -195,7 +195,7 @@ NonOrthogonalSlicer<TInputImage, TOutputImage>
       // TODO: this may behave badly for small voxel sizes
       if(fabs(dx) < 1.0e-5)
         {
-        if(x < x0 || x > x1)
+        if((x < x0 && x < x1) || (x > x0 && x > x1))
           {
           skipLine = true;
           break;
@@ -218,6 +218,10 @@ NonOrthogonalSlicer<TInputImage, TOutputImage>
       }
 
     if(kStart >= line_len || kEnd <= 0)
+      skipLine = true;
+
+    // This should not happen but it does, must be a bug in the code
+    if(kEnd <= kStart)
       skipLine = true;
 
     // Deal with skipped lines
@@ -284,7 +288,7 @@ NonOrthogonalSlicerPixelAccessTraitsWorker<TInputImage, TOutputImage>
       ? m_Interpolator.InterpolateNearestNeighbor(cix,  m_Buffer)
       : m_Interpolator.Interpolate(cix, m_Buffer);
 
-  if(status == Interpolator::INSIDE)
+  if(status == Interpolator::INSIDE || status == Interpolator::BORDER)
     {
     for(int k = 0; k < m_NumComponents; k++)
       *(*out_ptr)++ = static_cast<OutputComponentType>(m_Buffer[k]);
