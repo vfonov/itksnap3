@@ -1,6 +1,7 @@
 [submodule "Submodules/c3d"]
 	path = Submodules/c3d
-	url = ../../c3d/git
+	url = https://github.com/vfonov/c3d.git
+	branch = fix_itk_4.13
 [submodule "Submodules/greedy"]
 	path = Submodules/greedy
 	url = https://github.com/pyushkevich/greedy.git
