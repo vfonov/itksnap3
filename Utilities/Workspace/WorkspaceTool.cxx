@@ -46,6 +46,7 @@
 #include "itksys/MD5.h"
 #include "itksys/Directory.hxx"
 #include "itksys/RegularExpression.hxx"
+#include "itkMatrixOffsetTransformBase.h"
 #include "IRISException.h"
 #include "ColorLabelTable.h"
 
@@ -103,8 +104,10 @@ int usage(int rc)
   cout << "  -props-set-nickname <name>        : Set the nickname of the selected layer" << endl;
   cout << "  -props-set-colormap <preset>      : Set colormap to a given system preset" << endl;
   cout << "  -props-set-contrast <map_spec>    : Set the contrast mapping specification" << endl;
+  cout << "  -props-set-mcd <mcd_spec>         : Set the multi-component display mode (see below)" << endl;
   cout << "  -props-set-sticky <on|off>        : Set the stickiness of the layer" << endl;
   cout << "  -props-set-alpha <value>          : Set the alpha (transparency) of the layer" << endl;
+  cout << "  -props-set-transform <file>       : Set the transform relative to main image" << endl;
   cout << "  -props-registry-get <key>         : Gets a registry key relative to picked layer" << endl;
   cout << "  -props-registry-set <key> <value> : Sets a registry key relative to picked layer" << endl;
   cout << "Tag assignment commands (apply to picked layer/object): " << endl;
@@ -116,7 +119,7 @@ int usage(int rc)
   cout << "  -labels-clear                     : Remove all labels except the default clear label" << endl;
   cout << "  -labels-add <file> [offst] [ptrn] : Add labels from file, optionally shifting by offset and" << endl;
   cout << "                                      renaming with C printf pattern (e.g. 'left %s')" << endl;
-  cout << "Distributed segmentation server user commands: " << endl;
+  cout << "Distributed segmentation server (DSS) user commands: " << endl;
   cout << "  -dss-auth <url> [user] [passwd]   : Sign in to the server. This will create a token" << endl;
   cout << "                                      that may be used in future -dss calls" << endl;
   cout << "  -dss-services-list                : List all available segmentation services" << endl;
@@ -129,7 +132,7 @@ int usage(int rc)
   cout << "  -dss-tickets-wait <id> [timeout]  : Wait for the ticket 'id' to complete" << endl;
   cout << "  -dss-tickets-download <id> <dir>  : Download the result for ticket 'id' to directory 'dir'" << endl;
   cout << "  -dss-tickets-delete <id>          : Delete a ticket" << endl;
-  cout << "Distributed segmentation server provider commands: " << endl;
+  cout << "DSS service provider commands: " << endl;
   cout << "  -dssp-services-list               : List all the services you are listed as provider for" << endl;
   cout << "  -dssp-services-claim <service_hash_list> <provider> <instance_id> [timeout]" << endl;
   cout << "                                    : Claim the next available ticket for given service or list of services." << endl;
@@ -149,6 +152,19 @@ int usage(int rc)
   cout << "  -dssp-tickets-attach ...          : Attach a file to the ticket <id>. The file will be linked to the next" << endl;
   cout << "      <id> <desc> <file> [mimetype]   log command issued for this ticket" << endl;
   cout << "  -dssp-tickets-upload <id>         : Send the current workspace as the result for ticket 'id'" << endl;
+  cout << "DSS administrative commands: " << endl;
+  cout << "  -dssa-providers-list              : List all the registered providers" << endl;
+  cout << "  -dssa-providers-add <name>        : Add new provider" << endl;
+  cout << "  -dssa-providers-delete <name>     : Remove provider" << endl;
+  cout << "  -dssa-providers-users-list        : List all users authorized under a provider" << endl;
+  cout << "  -dssa-providers-users-add <provider_name> <user_email>" << endl;
+  cout << "  -dssa-providers-users-delete <provider_name> <user_numeric_id>" << endl;
+  cout << "  -dssa-providers-services-list <provider_name>" << endl;
+  cout << "                                    : List all services under a provider" << endl;
+  cout << "  -dssa-providers-services-add <provider_name> <git_repo> <git_ref>" << endl;
+  cout << "                                    : Add a service under a provider by specifying a githash repository" << endl;
+  cout << "                                      and reference (branch/tag/commit)" << endl;
+  cout << "  -dssa-providers-services-delete <provider_name> <service_githash>" << endl;
   cout << "Specifying Layer IDs:" << endl;
   cout << "  ###                               : Selects any layer by number (e.g., 003)" << endl;
   cout << "  M|main                            : Selects the main layer " << endl;
@@ -160,6 +176,9 @@ int usage(int rc)
   cout << "  AUTO                              : Automatic, as determined by ITK-SNAP" << endl;
   cout << "  DEFAULT                           : Default state, linear from 0 to 1" << endl;
   cout << "  CURVE N t1 y1 ... tN yN           : Fully specified curve with N points" << endl; 
+  cout << "Multi-Component Display (MCD) Specification:" << endl;
+  cout << "  comp <N>                          : Display N-th component" << endl;
+  cout << "  <mag|avg|max|rgb|grid>            : Special modes" << endl;
   return rc;
 }
 
@@ -204,6 +223,53 @@ void print_string_with_prefix(ostream &sout, const string &text, const string &p
   string line, word;
   while(getline(iss, line))
     sout << prefix << line << endl;
+}
+
+void simple_rest_get(const char *url, const char *exception_message, const char *prefix, ...)
+{
+  // Handle the ...
+  std::va_list args;
+  va_start(args, prefix);
+
+  // Execute the REST command
+  RESTClient rc;
+
+  // Try calling command
+  try {
+    if(!rc.GetVA(url, args))
+      throw IRISException("%s: %s", exception_message, rc.GetResponseText());
+    va_end(args);
+  }
+  catch(IRISException &exc) {
+    va_end(args);
+    throw;
+  }
+
+  // Print CSV
+  print_string_with_prefix(cout, rc.GetFormattedCSVOutput(false), prefix);
+}
+
+void simple_rest_post(const char *url, const char *params, const char *exception_message, const char *prefix, ...)
+{
+  // Handle the ...
+  std::va_list args;
+  va_start(args, prefix);
+
+  // Execute the REST command
+  RESTClient rc;
+
+  // Try calling command
+  try {
+    if(!rc.PostVA(url, params, args))
+      throw IRISException("%s: %s", exception_message, rc.GetResponseText());
+    va_end(args);
+  }
+  catch(IRISException &exc) {
+    va_end(args);
+    throw;
+  }
+
+  cout << prefix << rc.GetOutput() << endl;
 }
 
 /** 
@@ -386,9 +452,13 @@ int main(int argc, char *argv[])
       else if(arg == "-layers-pick-by-tag" || arg == "-lpt" || arg == "-lpbt")
         {
         string tag = cl.read_string();
-        layer_folder = ws.FindFolderForUniqueTag(tag);
-        if(!ws.IsKeyValidLayer(layer_folder))
-          throw IRISException("Folder %s with tag %s does not contain a valid layer", layer_folder.c_str(), tag.c_str());
+        std::list<std::string> layers = ws.FindLayersByTag(tag);
+
+        if(layers.size() != 1)
+          throw IRISException("No unique layer found, tag %s is associated with %d layers", tag.c_str(), layers.size());
+
+        layer_folder = layers.front();
+
         cout << "INFO: picked layer " << layer_folder << endl;
         }
 
@@ -488,7 +558,7 @@ int main(int argc, char *argv[])
           }
         }
 
-      else if(arg == "-props-get-transform")
+      else if(arg == "-props-get-transform" || arg == "-pgt")
         {
         if(!ws.IsKeyValidLayer(layer_folder))
           throw IRISException("Selected object %s is not a valid layer", layer_folder.c_str());
@@ -503,8 +573,62 @@ int main(int argc, char *argv[])
         // Read the transform
         AffineTransformHelper::Mat44 Q = AffineTransformHelper::GetRASMatrix(tran);
 
-        // Generate a matrix from the transform
-        cout << prefix << Q << endl;
+        // Print the matrix
+        for(unsigned int i = 0; i < 4; i++)
+          {
+          cout << prefix << Q(i,0) << " " << Q(i,1) << " " << Q(i,2) << " " << Q(i,3) << endl;
+          }
+        }
+
+      else if (arg == "-props-set-transform" || arg == "-pst")
+        {
+        // Must be a valid folder
+        if(!ws.IsKeyValidLayer(layer_folder))
+          throw IRISException("Selected object %s is not a valid layer", layer_folder.c_str());
+
+        // Read the transform file
+        std::string fn_tran = cl.read_existing_filename();
+
+        // Read the transform. Format is not specified so we assume it is in C3D format
+        SmartPtr<AffineTransformHelper::ITKTransformMOTB> tran =
+            AffineTransformHelper::ReadAsRASMatrix(fn_tran.c_str());
+
+        // Get the folder
+        Registry &folder = ws.GetRegistry().Folder(layer_folder);
+
+        // Write to registry
+        AffineTransformHelper::WriteToRegistry(&folder, tran.GetPointer());
+        }
+
+      else if(arg == "-props-set-mcd")
+        {
+        // Read the mode information
+        string mode = cl.read_string();
+        std::transform(mode.begin(), mode.end(), mode.begin(), ::tolower);
+
+        // Initialize the multi-channel display mode
+        MultiChannelDisplayMode mcd;
+        if(mode == "comp")
+          {
+          mcd.SelectedScalarRep = SCALAR_REP_COMPONENT;
+          mcd.SelectedComponent = (int) cl.read_integer();
+          }
+        else if(mode == "avg")
+          mcd.SelectedScalarRep = SCALAR_REP_AVERAGE;
+        else if(mode == "mag")
+          mcd.SelectedScalarRep = SCALAR_REP_MAGNITUDE;
+        else if(mode == "max")
+          mcd.SelectedScalarRep = SCALAR_REP_MAX;
+        else if(mode == "rgb")
+          mcd = MultiChannelDisplayMode::DefaultForRGB();
+        else if(mode == "grid")
+          {
+          mcd = MultiChannelDisplayMode::DefaultForRGB();
+          mcd.RenderAsGrid = true;
+          }
+
+        // Store the mode in the folder
+        ws.SetLayerMultiComponentDisplay(layer_folder, mcd);
         }
 
       else if(arg == "-labels-set")
@@ -554,7 +678,10 @@ int main(int argc, char *argv[])
 
         // Authenticate with the token
         RESTClient rc;
-        rc.Authenticate(url.c_str(), token_string.c_str());
+        if(!rc.Authenticate(url.c_str(), token_string.c_str()))
+          throw IRISException("Authentication error: %s", rc.GetResponseText());
+        else
+          printf("Success: %s", rc.GetOutput());
         }
       else if(arg == "-dss-services-list")
         {
@@ -855,6 +982,60 @@ int main(int argc, char *argv[])
         // Upload the workspace as the result
         UploadResultWorkspace(ws, cl.read_integer());
         }
+      else if(arg == "-dssa-providers-list")
+        {
+        simple_rest_get("api/admin/providers", "Error listing providers", prefix.c_str());
+        }
+      else if(arg == "-dssa-providers-add")
+        {
+        std::string pname = cl.read_string();
+        simple_rest_post("api/admin/providers", "name=%s", "Error adding provider", prefix.c_str(), pname.c_str());
+        }
+      else if(arg == "-dssa-providers-delete")
+        {
+        std::string pname = cl.read_string();
+        simple_rest_post("api/admin/providers/%s/delete", NULL, "Error deleting provider", prefix.c_str(), pname.c_str());
+        }
+      else if(arg == "-dssa-providers-users-list")
+        {
+        std::string pname = cl.read_string();
+        simple_rest_get("api/admin/providers/%s/users", "Error listing provider's users", prefix.c_str(), pname.c_str());
+        }
+      else if(arg == "-dssa-providers-users-add")
+        {
+        std::string pname = cl.read_string();
+        std::string email = cl.read_string();
+        simple_rest_post("api/admin/providers/%s/users", "email=%s", "Error adding user to provider", prefix.c_str(), 
+                         pname.c_str(), email.c_str());
+        }
+      else if(arg == "-dssa-providers-users-delete")
+        {
+        std::string pname = cl.read_string();
+        int user_id = cl.read_integer();
+        simple_rest_post("api/admin/providers/%s/users/%d/delete", NULL, "Error deleting user from provider", prefix.c_str(), 
+                         pname.c_str(), user_id);
+        }
+      else if(arg == "-dssa-providers-services-list")
+        {
+        std::string pname = cl.read_string();
+        simple_rest_get("api/admin/providers/%s/services", "Error listing provider's services", prefix.c_str(), pname.c_str());
+        }
+      else if(arg == "-dssa-providers-services-add")
+        {
+        std::string pname = cl.read_string();
+        std::string repo = cl.read_string();
+        std::string ref = cl.read_string();
+        simple_rest_post("api/admin/providers/%s/services", "repo=%s&ref=%s", "Error adding service to provider", prefix.c_str(), 
+                         pname.c_str(), repo.c_str(), ref.c_str());
+        }
+      else if(arg == "-dssa-providers-services-delete")
+        {
+        std::string pname = cl.read_string();
+        std::string githash = cl.read_string();
+        simple_rest_post("api/admin/providers/%s/services/%s/delete", NULL, "Error deleting user from provider", prefix.c_str(), 
+                         pname.c_str(), githash.c_str());
+        }
+
       else
         throw IRISException("Unknown command %s", arg.c_str());
       }

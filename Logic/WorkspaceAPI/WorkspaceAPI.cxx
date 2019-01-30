@@ -7,6 +7,7 @@
 #include "FormattedTable.h"
 #include "GuidedNativeImageIO.h"
 #include "ColorLabelTable.h"
+#include "MultiChannelDisplayMode.h"
 #include "RESTClient.h"
 #include "itkCommand.h"
 
@@ -195,6 +196,33 @@ void WorkspaceAPI::PrintLayerList(std::ostream &os, const string &line_prefix)
     }
 
   table.Print(os, line_prefix);
+}
+
+
+std::list<std::string> WorkspaceAPI::FindLayersByTag(const string &tag)
+{
+  // Iterate over all the layers stored in the workspace
+  int n_layers = this->GetNumberOfLayers();
+
+  // Matching layers
+  std::list<std::string> matches;
+
+  // Load all of the layers in the current project
+  for(int i = 0; i < n_layers; i++)
+    {
+    // Get the key of the layer
+    string key = Registry::Key("Layers.Layer[%03d]", i);
+    Registry &f = m_Registry.Folder(key);
+
+    // Get the tags in this layer
+    StringSet tags = WorkspaceAPI::GetTags(f);
+    if(tags.find(tag) != tags.end())
+      {
+      matches.push_back(key);
+      }
+    }
+
+  return matches;
 }
 
 void WorkspaceAPI::ListLayerFilesForTag(const string &tag, ostream &sout, const string &prefix)
@@ -499,6 +527,12 @@ void WorkspaceAPI::SetLayerNickname(const string &layer_key, const string &value
 void WorkspaceAPI::SetLayerColormapPreset(const string &layer_key, const string &value)
 {
   GetLayerFolder(layer_key)["LayerMetaData.DisplayMapping.ColorMap.Preset"] << value;
+}
+
+void WorkspaceAPI::SetLayerMultiComponentDisplay(const string &layer_key, const MultiChannelDisplayMode &mode)
+{
+  Registry &folder = GetLayerFolder(layer_key);
+  mode.Save(folder.Folder("LayerMetaData.DisplayMapping"));
 }
 
 void WorkspaceAPI::RenameLayer(const string &layer_key, const string &new_filename, bool force)

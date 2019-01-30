@@ -6,6 +6,8 @@
 
 namespace itk { class Command; }
 
+class MultiChannelDisplayMode;
+
 /**
  * This class encapsulates an ITK-SNAP workspace. It is just a wrapper around
  * a registry object, but with extra functions that support workspaces
@@ -116,6 +118,11 @@ public:
   std::string FindLayerByRole(const std::string &role, int pos_in_role);
 
   /**
+   * Find layers that match a tag
+   */
+  std::list<std::string> FindLayersByTag(const std::string &tag);
+
+  /**
    * Translate a shorthand layer specifier to a folder ID. Will throw an exception if
    * the layer specifier cannot be found or is out of range
    */
@@ -152,6 +159,9 @@ public:
 
   /** Set the contrast mapping for the selected layer */
   void SetLayerContrastToLinear(const std::string &layer_key, double t0, double t1);
+
+  /** Set the multi-component display mode in a layer */
+  void SetLayerMultiComponentDisplay(const std::string &layer_key, const MultiChannelDisplayMode &mode);
 
   /** Set labels from a label file */
   void SetLabels(const std::string &label_file);

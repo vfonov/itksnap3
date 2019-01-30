@@ -46,6 +46,11 @@ RegistrationModel::RegistrationModel()
         &Self::GetScalingValueAndRange,
         &Self::SetScalingValue);
 
+  m_FlipModel = wrapGetterSetterPairAsProperty(
+        this,
+        &Self::GetFlipValue,
+        &Self::SetFlipValue);
+
   m_LogScalingModel = wrapGetterSetterPairAsProperty(
         this,
         &Self::GetLogScalingValueAndRange,
@@ -143,8 +148,10 @@ void RegistrationModel::ResetOnMainImageChange()
     }
 }
 
-void RegistrationModel::UpdateManualParametersFromWrapper(bool force_update)
+void RegistrationModel::UpdateManualParametersFromWrapper(bool reset_flips, bool force_update)
 {
+  typedef itk::Euler3DTransform<double> EulerTransform;
+
   ImageWrapperBase *layer = this->GetMovingLayerWrapper();
 
   // If there is no layer, we just invalidate the parameters
@@ -173,7 +180,55 @@ void RegistrationModel::UpdateManualParametersFromWrapper(bool force_update)
   // Perform polar decomposition
   vnl_svd<double> svd(m_ManualParam.AffineMatrix.GetVnlMatrix());
 
-  ITKMatrixType rotation = svd.U() * svd.V().transpose();
+  // Get the determinant of the affine matrix
+  double det = vnl_determinant(m_ManualParam.AffineMatrix.GetVnlMatrix());
+
+  // Get the current flip matrix and its determinant
+  ITKMatrixType flip; flip.SetIdentity();
+  double det_flip_curr = 1.0;
+  if(!reset_flips)
+    {
+    for(unsigned int a = 0; a < 3; a++)
+      {
+      if(m_ManualParam.Flip[a])
+        {
+        flip(a,a) = -1.0;
+        det_flip_curr *= -1.0;
+        }
+      }
+    }
+
+  // If the current flip matrix has the same determinatnt as the affine transform, use it
+  // but if not, find the single flip that results in the smallest Euler angle
+  if(det * det_flip_curr < 0.0)
+    {
+    // The smallest Euler angle magnitude
+    double ea_mag_best = 0.0;
+
+    // Only bother with flips if the determinant is negative
+    // Only consider single flips
+    for(unsigned int a = 0; a < 3; a++)
+      {
+      // Generate the flip matrix
+      ITKMatrixType flip_test;
+      flip_test.SetIdentity();
+      flip_test(a,a) = -1.0;
+
+      // Flip determinant same sign as matrix determinant - candidate flip
+      EulerTransform::Pointer euler = EulerTransform::New();
+      euler->SetMatrix(svd.U() * svd.V().transpose() * flip_test.GetVnlMatrix());
+      Vector3d ea(euler->GetAngleX(), euler->GetAngleY(), euler->GetAngleZ());
+      double ea_mag = ea.inf_norm();
+      if(a == 0 || ea_mag < ea_mag_best)
+        {
+        ea_mag_best = ea_mag;
+        flip = flip_test;
+        }
+      }
+    }
+
+  // Compute the rotation matrix - must have positive determinant to make sense
+  ITKMatrixType rotation = svd.U() * svd.V().transpose() * flip.GetVnlMatrix();
 
   // Get the rotation center in world coordinates
   itk::Point<double, 3> ptCenter;
@@ -181,24 +236,21 @@ void RegistrationModel::UpdateManualParametersFromWrapper(bool force_update)
         to_itkIndex(m_RotationCenter), ptCenter);
 
   // Compute Euler angles
-  typedef itk::Euler3DTransform<double> EulerTransform;
   EulerTransform::Pointer euler = EulerTransform::New();
   euler->SetCenter(ptCenter);
   euler->SetMatrix(rotation);
   euler->SetOffset(m_ManualParam.AffineOffset);
 
-  m_ManualParam.EulerAngles[0] = euler->GetAngleX();
-  m_ManualParam.EulerAngles[1] = euler->GetAngleY();
-  m_ManualParam.EulerAngles[2] = euler->GetAngleZ();
 
-  m_ManualParam.Translation[0] = euler->GetTranslation()[0];
-  m_ManualParam.Translation[1] = euler->GetTranslation()[1];
-  m_ManualParam.Translation[2] = euler->GetTranslation()[2];
+  Vector3d ea(euler->GetAngleX(), euler->GetAngleY(), euler->GetAngleZ());
 
-  // The scaling factors are the diagonal entries of the W matrix
-  m_ManualParam.Scaling[0] = svd.W()(0,0);
-  m_ManualParam.Scaling[1] = svd.W()(1,1);
-  m_ManualParam.Scaling[2] = svd.W()(2,2);
+  for(unsigned int a = 0; a < 3; a++)
+    {
+    m_ManualParam.EulerAngles[a] = ea[a];
+    m_ManualParam.Translation[a] = euler->GetTranslation()[a];
+    m_ManualParam.Scaling[a] = svd.W()(a,a);
+    m_ManualParam.Flip[a] = flip(a,a) < 0;
+    }
 
   // The shearing rotation matrix can be represented as Euler angles or quaternion
   // or whatever, but since we never present these parameters to the user, it is easier
@@ -257,6 +309,11 @@ void RegistrationModel::UpdateWrapperFromManualParameters()
   vnl_matrix_fixed<double, 3, 3> scaling;
   scaling.fill(0.0);
   scaling.set_diagonal(m_ManualParam.Scaling);
+
+  // Apply the flip to the scaling matrix
+  for(unsigned int i = 0; i < 3; i++)
+    if(m_ManualParam.Flip[i])
+      scaling(i,i) *= -1.0;
 
   vnl_matrix_fixed<double, 3, 3> scale_shear =
       m_ManualParam.ShearingMatrix * scaling * m_ManualParam.ShearingMatrix.transpose();
@@ -335,7 +392,7 @@ void RegistrationModel::ApplyTranslation(const Vector3d &tran)
 void RegistrationModel::SetRotationCenter(const Vector3ui &pos)
 {
   m_RotationCenter = pos;
-  this->UpdateManualParametersFromWrapper(true);
+  this->UpdateManualParametersFromWrapper(false, true);
 }
 
 void RegistrationModel::SetMovingTransform(const RegistrationModel::ITKMatrixType &matrix, const RegistrationModel::ITKVectorType &offset)
@@ -353,7 +410,7 @@ void RegistrationModel::SetMovingTransform(const RegistrationModel::ITKMatrixTyp
   layer->SetITKTransform(layer->GetReferenceSpace(), affine);
 
   // Update our parameters
-  this->UpdateManualParametersFromWrapper();
+  this->UpdateManualParametersFromWrapper(false, false);
 }
 
 void RegistrationModel::GetMovingTransform(ITKMatrixType &matrix, ITKVectorType &offset)
@@ -611,7 +668,7 @@ void RegistrationModel::LoadTransform(const char *filename, TransformFormat form
   layer->SetITKTransform(layer->GetReferenceSpace(), tran);
 
   // Update our parameters
-  this->UpdateManualParametersFromWrapper();
+  this->UpdateManualParametersFromWrapper(true, false);
 }
 
 
@@ -625,7 +682,7 @@ void RegistrationModel::SaveTransform(const char *filename, TransformFormat form
     }
   else // (format == FORMAT_ITK)
     {
-    AffineTransformHelper::WriteAsRASMatrix(
+    AffineTransformHelper::WriteAsITKTransform(
           this->GetMovingLayerWrapper()->GetITKTransform(), filename);
     }
 
@@ -726,7 +783,7 @@ void RegistrationModel::OnUpdate()
   if(wrapper_updated || layers_changed)
     {
     // This will update the cached parameters
-    this->UpdateManualParametersFromWrapper();
+    this->UpdateManualParametersFromWrapper(true, false);
     }
 }
 
@@ -743,6 +800,8 @@ void RegistrationModel::ResetTransformToIdentity()
   matrix.SetIdentity();
   offset.Fill(0.0);
 
+  // Reset the flips
+  this->m_ManualParam.Flip.fill(false);
   this->SetMovingTransform(matrix, offset);
 }
 
@@ -811,7 +870,7 @@ void RegistrationModel::SetMovingLayerValue(unsigned long value)
   m_MovingLayerId = value;
 
   // Update the cache
-  this->UpdateManualParametersFromWrapper();
+  this->UpdateManualParametersFromWrapper(true, false);
 
   // Fire a state change
   this->InvokeEvent(StateMachineChangeEvent());
@@ -907,6 +966,27 @@ void RegistrationModel::SetScalingValue(Vector3d value)
 {
   // Update the translation vector
   m_ManualParam.Scaling = value;
+
+  // Update the transform
+  this->UpdateWrapperFromManualParameters();
+}
+
+bool RegistrationModel::GetFlipValue(Vector3b &value)
+{
+  // Make sure that the manual parameters are valid
+  if(m_ManualParam.LayerID == NOID)
+    return false;
+
+  // Assign the value trivially
+  value = m_ManualParam.Flip;
+
+  return true;
+}
+
+void RegistrationModel::SetFlipValue(Vector3b value)
+{
+  // Update the flips
+  m_ManualParam.Flip = value;
 
   // Update the transform
   this->UpdateWrapperFromManualParameters();

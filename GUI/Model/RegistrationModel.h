@@ -66,6 +66,9 @@ public:
   /** Scaling factor */
   irisGetMacro(ScalingModel, AbstractRangedDoubleVec3Property *)
 
+  /** Scaling factor */
+  irisGetMacro(FlipModel, AbstractSimpleBooleanVec3Property *)
+
   /** Logarithm of the scaling factor - for the slider */
   irisGetMacro(LogScalingModel, AbstractRangedDoubleVec3Property *)
 
@@ -148,7 +151,7 @@ protected:
 
   // This method is used to updated the cached matrix/offset and the parameters such
   // as Euler angles from the information in the moving image wrapper
-  void UpdateManualParametersFromWrapper(bool force_update = false);
+  void UpdateManualParametersFromWrapper(bool reset_flips = false, bool force_update = false);
 
   // This method is called to recompute the transform in the moving image wrapper from
   // parameters including scaling, euler angles, and translation
@@ -181,6 +184,10 @@ protected:
   SmartPtr<AbstractRangedDoubleVec3Property> m_ScalingModel;
   bool GetScalingValueAndRange(Vector3d &value, NumericValueRange<Vector3d> *range);
   void SetScalingValue(Vector3d value);
+
+  SmartPtr<AbstractSimpleBooleanVec3Property> m_FlipModel;
+  bool GetFlipValue(Vector3b &value);
+  void SetFlipValue(Vector3b value);
 
   SmartPtr<AbstractRangedDoubleVec3Property> m_LogScalingModel;
   bool GetLogScalingValueAndRange(Vector3d &value, NumericValueRange<Vector3d> *range);
@@ -243,6 +250,9 @@ protected:
 
     // Time stamp of the last update
     itk::TimeStamp UpdateTime;
+
+    // Flipping
+    Vector3b Flip;
 
     TransformManualParameters() : LayerID(NOID) {}
   };

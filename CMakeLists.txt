@@ -91,11 +91,11 @@ ENDIF()
 SET(SNAP_VERSION_MAJOR 3)
 SET(SNAP_VERSION_MINOR 8)
 SET(SNAP_VERSION_PATCH 0)
-SET(SNAP_VERSION_QUALIFIER "-alpha")
+SET(SNAP_VERSION_QUALIFIER "-beta")
 
 # These fields should also be modified each time
-SET(SNAP_VERSION_RELEASE_DATE "20180521")
-SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "May 21, 2018")
+SET(SNAP_VERSION_RELEASE_DATE "20181028")
+SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Oct 28, 2018")
 
 # This field should only change when the format of the settings files changes
 # in a non backwards-compatible way
@@ -285,6 +285,7 @@ SET(LOGIC_CXX
   Logic/ImageWrapper/InputSelectionImageFilter.cxx
   Logic/ImageWrapper/LabelImageWrapper.cxx
   Logic/ImageWrapper/GuidedNativeImageIO.cxx
+  Logic/ImageWrapper/MultiChannelDisplayMode.cxx
   Logic/ImageWrapper/ScalarImageHistogram.cxx
   Logic/ImageWrapper/ScalarImageWrapper.cxx
   Logic/ImageWrapper/VectorImageWrapper.cxx
@@ -397,6 +398,7 @@ SET(LOGIC_HEADERS
   Logic/ImageWrapper/ImageWrapper.h
   Logic/ImageWrapper/ImageWrapperBase.h
   Logic/ImageWrapper/ImageWrapperTraits.h
+  Logic/ImageWrapper/MultiChannelDisplayMode.h
   Logic/ImageWrapper/VectorToScalarImageAccessor.h
   Logic/RLEImage/RLEImage.h
   Logic/RLEImage/RLEImage.txx
@@ -1044,6 +1046,15 @@ SET(SNAP_EXTERNAL_LIBS
   ${SNAP_VTK_LIBS} 
   ${SNAP_SYSTEM_LIBS}
 )
+
+# Non-graphical external libs (a subset)
+SET(SNAP_EXTERNAL_LIBS_LITE
+  ${SNAP_SUBMODULE_LIBS}
+  ${SNAP_ITK_LIBS} 
+  vtkCommonCore vtkFiltersCore
+  ${CURL_LIBRARIES}
+  ${SYSTEM_LIBS})
+
 #--------------------------------------------------------------------------------
 # Include C3D Library as submodule
 #--------------------------------------------------------------------------------
@@ -1096,7 +1107,7 @@ ADD_LIBRARY(itksnapui_qt
 # This is experimental: it seems that shared libraries do not
 # build accurately (at least on MacOS) without the following
 # two lines
-TARGET_LINK_LIBRARIES(itksnaplogic ${SNAP_EXTERNAL_LIBS})
+TARGET_LINK_LIBRARIES(itksnaplogic ${SNAP_EXTERNAL_LIBS_LITE})
 TARGET_LINK_LIBRARIES(itksnapui_model itksnaplogic ${SNAP_EXTERNAL_LIBS})
 TARGET_LINK_LIBRARIES(itksnapui_qt ${SNAP_QT_LIBRARIES} ${SNAP_EXTERNAL_LIBS})
 
@@ -1162,7 +1173,8 @@ SET(GUI_TESTS
   DiffSpace
   ProbeIntensity
   RegionCompetition
-  RandomForest)
+  RandomForest
+  RandomForestBailOut)
 
 SET(TESTDATA_DIR "${SNAP_SOURCE_DIR}/Testing/TestData")
 set(TEMP ${SNAP_BINARY_DIR}/Testing/Temporary)
@@ -1239,7 +1251,7 @@ add_test(NAME SlicingPerformanceTestZ150 COMMAND itkTestDriver
 # This test basically checks whether we can build using the logic library onlu
 ADD_EXECUTABLE(logic_api_test
     Testing/Logic/IRISApplicationTest.cxx)
-TARGET_LINK_LIBRARIES(logic_api_test ${ITK_LIBRARIES} itksnaplogic)
+TARGET_LINK_LIBRARIES(logic_api_test ${SNAP_EXTERNAL_LIBS} itksnaplogic)
 TARGET_INCLUDE_DIRECTORIES(logic_api_test PUBLIC ${SNAP_INCLUDE_DIRS})
 
 add_test(NAME IRISApplicationTest COMMAND logic_api_test)

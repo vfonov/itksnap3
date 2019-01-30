@@ -97,6 +97,7 @@ GuidedNativeImageIO
   {"VoxBo CUB", "cub,cub.gz",        true,  false, true,  true},
   {"VTK Image", "vtk",               true,  false, true,  true},
   {"MINC1/2", "mnc,mnc.gz,minc,minc.gz", true,  true,  true,  true},
+  {"Generic ITK Image", "",          true,  true,  true,  true},
   {"INVALID FORMAT", "",             false, false, false, false}};
 
 
