@@ -119,6 +119,8 @@ int usage(int rc)
   cout << "  -labels-clear                     : Remove all labels except the default clear label" << endl;
   cout << "  -labels-add <file> [offst] [ptrn] : Add labels from file, optionally shifting by offset and" << endl;
   cout << "                                      renaming with C printf pattern (e.g. 'left %s')" << endl;
+  cout << "Annotation object commands" << endl;
+  cout << "  -annot-list                       : List all annotations in the workspace" << endl;
   cout << "Distributed segmentation server (DSS) user commands: " << endl;
   cout << "  -dss-auth <url> [user] [passwd]   : Sign in to the server. This will create a token" << endl;
   cout << "                                      that may be used in future -dss calls" << endl;
@@ -179,6 +181,10 @@ int usage(int rc)
   cout << "Multi-Component Display (MCD) Specification:" << endl;
   cout << "  comp <N>                          : Display N-th component" << endl;
   cout << "  <mag|avg|max|rgb|grid>            : Special modes" << endl;
+  cout << "Environment Variables" << endl;
+  cout << "  ITKSNAP_WT_DSS_SERVER             : URL of the server to use. When you authenticate with -dss-auth" << endl;
+  cout << "                                      the server is stored in a config file. When this variable is set" << endl;
+  cout << "                                      the config file is ignored and this server is used instead." << endl;
   return rc;
 }
 
@@ -664,6 +670,10 @@ int main(int argc, char *argv[])
         {
         string tag = cl.read_string();
         ws.RemoveTag(ws.GetRegistry().Folder(layer_folder), tag);
+        }
+      else if(arg == "-annot-list")
+        {
+        ws.PrintAnnotationList(cout, prefix);
         }
       else if(arg == "-dss-auth")
         {

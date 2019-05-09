@@ -91,11 +91,11 @@ ENDIF()
 SET(SNAP_VERSION_MAJOR 3)
 SET(SNAP_VERSION_MINOR 8)
 SET(SNAP_VERSION_PATCH 0)
-SET(SNAP_VERSION_QUALIFIER "-beta")
+SET(SNAP_VERSION_QUALIFIER "")
 
 # These fields should also be modified each time
-SET(SNAP_VERSION_RELEASE_DATE "20181028")
-SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Oct 28, 2018")
+SET(SNAP_VERSION_RELEASE_DATE "20190325")
+SET(SNAP_VERSION_RELEASE_DATE_FORMATTED "Mar 25, 2019")
 
 # This field should only change when the format of the settings files changes
 # in a non backwards-compatible way
@@ -251,6 +251,7 @@ SET(LOGIC_CXX
   Common/SNAPEvents.cxx
   Common/SNAPOpenGL.cxx
   Common/SystemInterface.cxx
+  Common/TagList.cxx
   Common/ThreadSpecificData.cxx
   Common/Trackball.cxx
   Common/ITKExtras/itkVoxBoCUBImageIO.cxx
@@ -361,6 +362,7 @@ SET(LOGIC_HEADERS
   Common/SNAPOpenGL.h
   Common/SNAPEvents.h
   Common/SystemInterface.h
+  Common/TagList.h
   Common/ThreadSpecificData.h
   Common/Trackball.h
   Logic/Common/ColorLabel.h
@@ -690,6 +692,7 @@ SET(UI_QT_CXX
   GUI/Qt/View/SnakeROIInteractionMode.cxx
   GUI/Qt/View/ThumbnailInteractionMode.cxx
   GUI/Qt/Windows/AboutDialog.cxx
+  GUI/Qt/Windows/AnnotationEditDialog.cxx
   GUI/Qt/Windows/DropActionDialog.cxx
   GUI/Qt/Windows/ImageIODialog.cxx
   GUI/Qt/Windows/ImageIOWizard.cxx
@@ -782,6 +785,7 @@ SET(UI_MOC_HEADERS
   GUI/Qt/View/TestOpenGLDialog.h
   GUI/Qt/View/ThumbnailInteractionMode.h
   GUI/Qt/Windows/AboutDialog.h
+  GUI/Qt/Windows/AnnotationEditDialog.h
   GUI/Qt/Windows/DropActionDialog.h
   GUI/Qt/Windows/ImageIODialog.h
   GUI/Qt/Windows/ImageIOWizard.h
@@ -866,6 +870,7 @@ SET(UI_FORMS
   GUI/Qt/Components/ViewPanel3D.ui
   GUI/Qt/Components/ZoomInspector.ui
   GUI/Qt/Windows/AboutDialog.ui
+  GUI/Qt/Windows/AnnotationEditDialog.ui
   GUI/Qt/Windows/DropActionDialog.ui
   GUI/Qt/Windows/ImageIODialog.ui
   GUI/Qt/Windows/ImageIOWizard/OverlayRolePage.ui
@@ -1069,13 +1074,13 @@ ADD_SUBDIRECTORY(${CONVERT3D_SOURCE_DIR})
 #--------------------------------------------------------------------------------
 # Include Greedy Library as submodule
 #--------------------------------------------------------------------------------
-SET(GREEDY_TOOL_SOURCE_DIR ${SNAP_SOURCE_DIR}/Submodules/greedy)
-SET(GREEDY_TOOL_BINARY_DIR ${SNAP_BINARY_DIR}/Submodules/greedy)
-SET(GREEDY_TOOL_BUILD_AS_SUBPROJECT ON)
-SET(GREEDY_TOOL_SUBPROJECT_BUILD_CLI ON)
-SET(GREEDY_TOOL_SUBPROJECT_INSTALL_CLI ON)
-SET(GREEDY_TOOL_SUBPROJECT_CLI_INSTALL_PATH ${SNAP_CLI_INSTALL_PATH})
-ADD_SUBDIRECTORY(${GREEDY_TOOL_SOURCE_DIR})
+SET(GREEDY_SOURCE_DIR ${SNAP_SOURCE_DIR}/Submodules/greedy)
+SET(GREEDY_BINARY_DIR ${SNAP_BINARY_DIR}/Submodules/greedy)
+SET(GREEDY_BUILD_AS_SUBPROJECT ON)
+SET(GREEDY_SUBPROJECT_BUILD_CLI ON)
+SET(GREEDY_SUBPROJECT_INSTALL_CLI ON)
+SET(GREEDY_SUBPROJECT_CLI_INSTALL_PATH ${SNAP_CLI_INSTALL_PATH})
+ADD_SUBDIRECTORY(${GREEDY_SOURCE_DIR})
 
 
 #--------------------------------------------------------------------------------

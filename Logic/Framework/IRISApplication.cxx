@@ -1597,6 +1597,9 @@ IRISApplication
   // Set the filename and nickname of the image wrapper
   layer->SetFileName(io->GetFileNameOfNativeImage());
 
+  // Initialize the color label table to defaults
+  m_ColorLabelTable->InitializeToDefaults();
+
   // Update the preprocessing settings to defaults.
   m_EdgePreprocessingSettings->InitializeToDefaults();
 
@@ -1681,7 +1684,7 @@ void IRISApplication::LoadMetaDataAssociatedWithLayer(
 
   // Read the tags for the image. This should have probably been placed into the LayerMeteData
   // but it's a pain to move things around in the registry file
-  std::list<std::string> tags;
+  TagList tags;
   (*folder)["Tags"].GetList(tags);
   layer->SetTags(tags);
 

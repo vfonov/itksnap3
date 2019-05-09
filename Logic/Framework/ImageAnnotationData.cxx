@@ -5,6 +5,19 @@
 namespace annot
 {
 
+/** Global annotation Id counter */
+unsigned long GlobalAnnotationIndex = 0;
+
+Vector3ui AbstractAnnotation::GetColor3ui() const
+{
+  return to_unsigned_int(this->GetColor() * 255.0 + 0.5);
+}
+
+void AbstractAnnotation::SetColor3ui(const Vector3ui &color)
+{
+  this->SetColor(to_double(color) / 255.0);
+}
+
 bool AbstractAnnotation::IsVisible(int plane, int slice) const
 {
   // Check if the plane makes this annotation invisible
@@ -34,6 +47,7 @@ void AbstractAnnotation::Save(Registry &folder)
   folder["VisibleInAllPlanes"] << m_VisibleInAllPlanes;
   folder["Plane"] << m_Plane;
   folder["Color"] << m_Color;
+  folder["Tags"].PutList(m_Tags);
 }
 
 void AbstractAnnotation::Load(Registry &folder)
@@ -43,6 +57,17 @@ void AbstractAnnotation::Load(Registry &folder)
   m_VisibleInAllPlanes = folder["VisibleInAllPlanes"][false];
   m_Plane = folder["Plane"][0];
   m_Color = folder["Color"][Vector3d(1.0, 0.0, 0.0)];
+  folder["Tags"].GetList(m_Tags);
+}
+
+unsigned long AbstractAnnotation::GetUniqueId() const
+{
+  return m_UniqueId;
+}
+
+AbstractAnnotation::AbstractAnnotation()
+{
+  m_UniqueId = ++GlobalAnnotationIndex;
 }
 
 int LineSegmentAnnotation::GetSliceIndex(int plane) const
@@ -84,6 +109,11 @@ void LineSegmentAnnotation::MoveBy(const Vector3d &offset)
   m_Segment.second += offset;
 }
 
+Vector3d LineSegmentAnnotation::GetCenter() const
+{
+  return (m_Segment.first + m_Segment.second) / 2.0;
+}
+
 int LandmarkAnnotation::GetSliceIndex(int plane) const
 {
   // Just return the coordinate of the first point. It should be the same
@@ -99,6 +129,11 @@ Vector3d LandmarkAnnotation::GetAnchorPoint(int plane) const
 void LandmarkAnnotation::MoveBy(const Vector3d &offset)
 {
   m_Landmark.Pos += offset;
+}
+
+Vector3d LandmarkAnnotation::GetCenter() const
+{
+  return m_Landmark.Pos;
 }
 
 void LandmarkAnnotation::Save(Registry &folder)
@@ -193,4 +228,63 @@ void ImageAnnotationData::LoadAnnotations(Registry &reg)
     }
 }
 
+template<class TAnnotPtr>
+ImageAnnotationIterator<TAnnotPtr>
+::ImageAnnotationIterator(const ImageAnnotationData *data)
+  : m_Data(data)
+{
+  // Search for the first annotation of desired type
+  m_Iter = m_Data->GetAnnotations().begin();
+  while(!IsAtEnd())
+    {
+    TAnnotPtr ann = dynamic_cast<TAnnotPtr>(m_Iter->GetPointer());
+    if(ann)
+      break;
+    else
+      ++m_Iter;
+    }
+}
 
+template<class TAnnotPtr>
+bool
+ImageAnnotationIterator<TAnnotPtr>
+::IsAtEnd() const
+{
+  return m_Iter == m_Data->GetAnnotations().end();
+}
+
+template<class TAnnotPtr>
+ImageAnnotationIterator<TAnnotPtr> &
+ImageAnnotationIterator<TAnnotPtr>
+::operator++()
+{
+  if(!IsAtEnd())
+    ++m_Iter;
+
+  while(!IsAtEnd())
+    {
+    TAnnotPtr ann = dynamic_cast<TAnnotPtr>(m_Iter->GetPointer());
+    if(ann)
+      break;
+    else
+      ++m_Iter;
+    }
+
+  return *this;
+}
+
+template<class TAnnotPtr>
+TAnnotPtr
+ImageAnnotationIterator<TAnnotPtr>
+::GetAnnotation() const
+{
+  if(!this->IsAtEnd())
+    return dynamic_cast<TAnnotPtr>(m_Iter->GetPointer());
+
+  return NULL;
+}
+
+
+template class ImageAnnotationIterator<annot::LandmarkAnnotation *>;
+template class ImageAnnotationIterator<annot::LineSegmentAnnotation *>;
+template class ImageAnnotationIterator<annot::AbstractAnnotation *>;
