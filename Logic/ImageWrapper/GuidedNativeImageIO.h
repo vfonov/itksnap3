@@ -40,14 +40,16 @@
 #include "itkImage.h"
 #include "itkImageIOBase.h"
 #include "itkVectorImage.h"
+#include "itkCommand.h"
+#include "itkEventObject.h"
 #include "gdcmTag.h"
+#include "MultiFrameDicomSeriesSorter.h"
 
-  
+
 namespace itk
 {
   template<class TPixel, unsigned int VDim> class Image;
   class ImageIOBase;
-  class Command;
 }
 
 
@@ -66,10 +68,13 @@ public:
   enum FileFormat {
     FORMAT_ANALYZE=0,
     FORMAT_DICOM_DIR,       // A directory containing multiple DICOM files
+		FORMAT_DICOM_DIR_4DCTA,    // A directory containing 4D CTA DICOM SERIES
     FORMAT_DICOM_FILE,      // A single DICOM file
+    FORMAT_ECHO_CARTESIAN_DICOM, // A Echocardiography Cartesian DICOM
     FORMAT_GE4, FORMAT_GE5, FORMAT_GIPL,
-    FORMAT_MHA, FORMAT_NIFTI, FORMAT_NRRD, FORMAT_RAW, FORMAT_SIEMENS,
-    FORMAT_VOXBO_CUB, FORMAT_VTK, FORMAT_MINC, FORMAT_GENERIC_ITK, FORMAT_COUNT};
+		FORMAT_MHA, FORMAT_MINC, FORMAT_NIFTI, FORMAT_NRRD, FORMAT_RAW, FORMAT_SIEMENS,
+    FORMAT_VOXBO_CUB, FORMAT_VTK, FORMAT_GENERIC_ITK,
+    FORMAT_COUNT};
 
   enum RawPixelType {
     PIXELTYPE_UCHAR=0, PIXELTYPE_CHAR, PIXELTYPE_USHORT, PIXELTYPE_SHORT, 
@@ -123,7 +128,7 @@ public:
   typedef itk::ImageIOBase IOBase;
   typedef itk::SmartPointer<IOBase> IOBasePointer;
 
-  typedef itk::ImageBase<3> ImageBase;
+  typedef itk::ImageBase<4> ImageBase;
   typedef itk::SmartPointer<ImageBase> ImageBasePointer;
 
   /**
@@ -135,11 +140,11 @@ public:
    * the format of interest, the user must cast the image to one of the 
    * desired formats.
    */
-  void ReadNativeImage(const char *FileName, Registry &folder);
+	void ReadNativeImage(const char *FileName, Registry &folder, itk::Command *progressCmd = nullptr);
 
-  void ReadNativeImageHeader(const char *FileName, Registry &folder);
+	void ReadNativeImageHeader(const char *FileName, Registry &folder, itk::Command *progressCmd = nullptr);
 
-  void ReadNativeImageData();
+	void ReadNativeImageData(itk::Command *progressCmd = nullptr);
 
   /**
    * Get the number of components in the native image read by ReadNativeImage.
@@ -176,7 +181,7 @@ public:
   std::string GetNicknameOfNativeImage() const
     { return m_NativeNickname; }
 
-  Vector3ui GetDimensionsOfNativeImage() const
+  vnl_vector_fixed<unsigned int, 4> GetDimensionsOfNativeImage() const
     { return m_NativeDimensions; }
 
   /**
@@ -184,7 +189,7 @@ public:
    * a pointer to an itk::VectorImage of some native format. Use one of the
    * Cast objects to cast it to an image of the type you want
    */
-  itk::ImageBase<3> *GetNativeImage() const
+  ImageBase *GetNativeImage() const
     { return m_NativeImage; }
 
   /**
@@ -283,8 +288,7 @@ public:
   void CreateImageIO(const char *fname, Registry &folder, bool read);
 
   // Get the output of the last operation
-  // irisGetMacro(IOBase, itk::ImageIOBase *);    
-
+  // irisGetMacro(IOBase, itk::ImageIOBase *);
 protected:
 
   GuidedNativeImageIO();
@@ -295,7 +299,7 @@ protected:
   template <typename TRaw> void CreateRawImageIO(Registry &folder);
 
   /** Templated function that reads a scalar image in its native datatype */
-  template <typename TScalar> void DoReadNative(const char *fname, Registry &folder);
+	template <typename TScalar> void DoReadNative(const char *fname, Registry &folder, itk::Command *ProgressCmd = nullptr);
 
   /** Templated function that reads a scalar image in its native datatype */
   template <typename TScalar> void DoSaveNative(const char *fname, Registry &folder);
@@ -303,21 +307,31 @@ protected:
   /** Templated function that computes an MD5 hash from the stored image */
   template <typename TScalar> std::string DoGetNativeMD5Hash();
 
+	/** convert 4D itk image into 4D itk vector image */
+	template <typename TScalar> void ConvertToVectorImage(
+			itk::VectorImage<TScalar, 4> *output, itk::Image<TScalar, 4> *input) const;
+
+	/** deep copy images */
+	template <class TImage> void DeepCopyImage(
+			typename TImage::Pointer output, typename TImage::Pointer input) const;
+
   /** A dispatch class that calls templated functions in the main class. */
   class DispatchBase {
   public:
-    virtual void ReadNative(GuidedNativeImageIO *self, const char *fname, Registry &folder) = 0;
-    virtual void SaveNative(GuidedNativeImageIO *self, const char *fname, Registry &folder) = 0;
+		virtual void ReadNative(GuidedNativeImageIO *self, const char *fname, Registry &folder,
+														itk::Command *progressCmd = nullptr) = 0;
+		virtual void SaveNative(GuidedNativeImageIO *self, const char *fname, Registry &folder) = 0;
     virtual std::string GetNativeMD5Hash(GuidedNativeImageIO *self) = 0;
     virtual ~DispatchBase() {}
   };
 
   template <typename TScalar> class Dispatch : public DispatchBase {
   public:
-    virtual void ReadNative(GuidedNativeImageIO *self, const char *fname, Registry &folder)
-      { self->DoReadNative<TScalar>(fname, folder); }
+		virtual void ReadNative(GuidedNativeImageIO *self, const char *fname, Registry &folder,
+														itk::Command *progressCmd = nullptr)
+			{ self->DoReadNative<TScalar>(fname, folder, progressCmd); }
     virtual void SaveNative(GuidedNativeImageIO *self, const char *fname, Registry &folder)
-      { self->DoSaveNative<TScalar>(fname, folder); }
+			{ self->DoSaveNative<TScalar>(fname, folder); }
     virtual std::string GetNativeMD5Hash(GuidedNativeImageIO *self)
       { return self->DoGetNativeMD5Hash<TScalar>(); }
   };
@@ -353,7 +367,9 @@ protected:
   std::string m_NativeTypeString, m_NativeFileName;
   std::string m_NativeNickname;
   IOBase::ByteOrder m_NativeByteOrder;
-  Vector3ui m_NativeDimensions;
+
+  // The reader supports reading up to 4-dimensional data
+  vnl_vector_fixed<unsigned int, 4> m_NativeDimensions;
 
   // Copy of the registry passed in when reading header
   Registry m_Hints;
@@ -366,6 +382,8 @@ protected:
 
   // Number of images per z-position in the DICOM series (e.g., multi-echo data)
   int m_DICOMImagesPerIPP;
+
+	MFDS::DicomFilesToFrameMap m_DicomFilesToFrameMap;
 
   /** Registry mappings for these enums */
   static bool m_StaticDataInitialized;
@@ -402,7 +420,9 @@ public:
 
   typedef TOutputImage                                         OutputImageType;
   typedef typename TOutputImage::PixelType                     OutputPixelType;
-  typedef itk::ImageBase<3>                                    NativeImageType;
+
+  // Native image type
+  typedef itk::ImageBase<TOutputImage::ImageDimension>         NativeImageType;
 
   // Constructor, takes pointer to native image
   OutputImageType *operator()(GuidedNativeImageIO *nativeIO);
@@ -418,7 +438,7 @@ private:
   double m_NativeScale, m_NativeShift;
 
   // Method that does the casting
-  template<typename TNative> void DoCast(itk::ImageBase<3> *native);
+  template<typename TNative> void DoCast(NativeImageType *native);
 };
 
 template<class TPixel> class TrivialCastFunctor
@@ -460,7 +480,7 @@ private:
   TCastFunctor m_Functor;
 
   // Method that does the casting
-  template<typename TNative> void DoCast(itk::ImageBase<3> *native);
+  template<typename TNative> void DoCast(itk::ImageBase<4> *native);
 
   friend class RescaleNativeImageToIntegralType<OutputImageType>;
 };

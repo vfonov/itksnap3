@@ -6,7 +6,7 @@
 
 namespace itk { class Command; }
 
-class MultiChannelDisplayMode;
+struct MultiChannelDisplayMode;
 
 /**
  * This class encapsulates an ITK-SNAP workspace. It is just a wrapper around
@@ -123,6 +123,21 @@ public:
   std::list<std::string> FindLayersByTag(const std::string &tag);
 
   /**
+   * Find time point that match a tag
+   */
+  std::list<unsigned int> FindTimePointByTag(const std::string &tag);
+
+  /**
+   * Find time point that match a name
+   */
+  std::list<unsigned int> FindTimePointByName(const std::string &name);
+
+  /**
+   * Print all time points
+   */
+  void PrintTimePointList(std::ostream &os, const std::string &line_prefix = "");
+
+  /**
    * Translate a shorthand layer specifier to a folder ID. Will throw an exception if
    * the layer specifier cannot be found or is out of range
    */
@@ -194,7 +209,7 @@ public:
   static std::string GetTempDirName();
 
   /** Export the workspace */
-  void ExportWorkspace(const char *new_workspace, CommandType *cmd_progress = NULL) const;
+  void ExportWorkspace(const char *new_workspace, CommandType *cmd_progress = NULL, bool scramble_filenames = true) const;
 
   /** Upload the workspace */
   void UploadWorkspace(const char *url, int ticket_id, const char *wsfile_suffix,

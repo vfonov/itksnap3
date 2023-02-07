@@ -10,6 +10,8 @@
 #include "ImageIODelegates.h"
 #include "HistoryManager.h"
 #include "GenericImageData.h"
+#include "QtReporterDelegates.h"
+#include "AllPurposeProgressAccumulator.h"
 
 #include "IRISException.h"
 #include <sstream>
@@ -44,7 +46,7 @@ void
 ImageIOWizardModel
 ::InitializeForSave(GlobalUIModel *parent,
                     AbstractSaveImageDelegate *delegate,
-                    const char *dispName)
+                    const char *dispName, bool saveCrntTP)
 {
   m_Parent = parent;
   m_Mode = SAVE;
@@ -56,6 +58,7 @@ ImageIOWizardModel
   m_SuggestedFilename = delegate->GetCurrentFilename();
   m_Overlay = false;
   m_LoadedImage = NULL;
+  m_SaveCurrentTPIn3D = saveCrntTP;
 
   m_SaveDelegate->ValidateBeforeSaving(m_SuggestedFilename, m_GuidedIO, m_Warnings);
 }
@@ -63,7 +66,7 @@ ImageIOWizardModel
 void
 ImageIOWizardModel
 ::InitializeForLoad(GlobalUIModel *parent,
-                    AbstractLoadImageDelegate *delegate)
+                    AbstractOpenImageDelegate *delegate)
 {
   m_Parent = parent;
   m_Mode = LOAD;
@@ -243,7 +246,7 @@ ImageIOWizardModel::GetSummaryItem(ImageIOWizardModel::SummaryItem item)
     return triple2str(m_GuidedIO->GetNativeImage()->GetOrigin());
 
   case ImageIOWizardModel::SI_ORIENT:
-    dir = m_GuidedIO->GetNativeImage()->GetDirection().GetVnlMatrix();
+    dir = m_GuidedIO->GetNativeImage()->GetDirection().GetVnlMatrix().as_matrix();
     rai = ImageCoordinateGeometry::ConvertDirectionMatrixToClosestRAICode(dir);
     if(ImageCoordinateGeometry::IsDirectionMatrixOblique(dir))
       sout << "Oblique (closest to " << rai << ")";
@@ -274,6 +277,10 @@ ImageIOWizardModel::GetSummaryItem(ImageIOWizardModel::SummaryItem item)
     sout << m_GuidedIO->GetNumberOfComponentsInNativeImage();
     return sout.str();
 
+  case ImageIOWizardModel::SI_TIMEPOINTS:
+    sout << m_GuidedIO->GetDimensionsOfNativeImage()[3];
+    return sout.str();
+
   case ImageIOWizardModel::SI_FILESIZE:
     sout << (m_GuidedIO->GetFileSizeOfNativeImage() / 1024.0) << " Kb";
     return sout.str();
@@ -295,10 +302,18 @@ ImageIOWizardModel::FileFormat ImageIOWizardModel::GetSelectedFormat()
 
 
 
-void ImageIOWizardModel::LoadImage(std::string filename)
+void ImageIOWizardModel::OpenImage(std::string filename, ImageReadingProgressAccumulator *irAccum)
 {
   // There is no loaded image to start with
   m_LoadedImage = NULL;
+
+	SmartPtr<itk::Command> headerProgCmd = irAccum->GetHeaderProgressCommand();
+	SmartPtr<itk::Command> dataProgCmd = irAccum->GetDataProgressCommand();
+	SmartPtr<itk::Command> miscProgCmd = irAccum->GetMiscProgressCommand();
+
+	SmartPtr<TrivalProgressSource> miscProgSrc = TrivalProgressSource::New();
+  miscProgSrc->AddObserverToProgressEvents(miscProgCmd);
+  miscProgSrc->StartProgress();
 
   try
   {
@@ -306,7 +321,7 @@ void ImageIOWizardModel::LoadImage(std::string filename)
     m_Warnings.clear();
 
     // Load the header
-    m_GuidedIO->ReadNativeImageHeader(filename.c_str(), m_Registry);
+		m_GuidedIO->ReadNativeImageHeader(filename.c_str(), m_Registry, headerProgCmd);
 
     // Check if the header is valid
     m_LoadDelegate->ValidateHeader(m_GuidedIO, m_Warnings);
@@ -315,14 +330,16 @@ void ImageIOWizardModel::LoadImage(std::string filename)
     m_LoadDelegate->UnloadCurrentImage();
 
     // Load the data from the image
-    m_GuidedIO->ReadNativeImageData();
+		m_GuidedIO->ReadNativeImageData(dataProgCmd);
 
     // Validate the image data
     m_LoadDelegate->ValidateImage(m_GuidedIO, m_Warnings);
 
     // Update the application
-    m_LoadedImage =
+    m_LoadedImage =	
         m_LoadDelegate->UpdateApplicationWithImage(m_GuidedIO);
+
+		miscProgSrc->AddProgress(0.9);
 
     // Save the IO hints to the registry
     Registry regAssoc;
@@ -332,6 +349,8 @@ void ImageIOWizardModel::LoadImage(std::string filename)
     regAssoc.Folder("Files.Grey").Update(m_Registry);
     si->AssociateRegistryWithFile(
           m_GuidedIO->GetFileNameOfNativeImage().c_str(), regAssoc);
+
+		miscProgSrc->AddProgress(0.1);
 
     // Also place the IO hints into the layer
     m_LoadedImage->SetIOHints(m_Registry);
@@ -358,6 +377,12 @@ void ImageIOWizardModel::SaveImage(std::string filename)
     throw IRISException("Error: exception occured during image IO. "
                         "Exception: %s", exc.what());
   }
+}
+
+void ImageIOWizardModel::SaveCurrentTPSegmentationIn3D(std::string filename)
+{
+  auto seg_layer = m_Parent->GetDriver()->GetSelectedSegmentationLayer();
+  seg_layer->WriteCurrentTPImageToFile(filename.c_str());
 }
 
 bool ImageIOWizardModel::CheckImageValidity()
@@ -432,7 +457,8 @@ ImageIOWizardModel
 
 void ImageIOWizardModel
 ::LoadDicomSeries(const std::string &filename,
-                  const std::string &series_id)
+									const std::string &series_id,
+									ImageReadingProgressAccumulator *irAccum)
 {
   // Get the DICOM registry from the GuidedIO
   typedef GuidedNativeImageIO::DicomDirectoryParseResult ParseResult;
@@ -469,7 +495,7 @@ void ImageIOWizardModel
   std::string dir = GetBrowseDirectory(filename);
 
   // Call the main load method
-  this->LoadImage(dir);
+	this->OpenImage(dir, irAccum);
 
   // DICOM filenames are meaningless. Assign a nickname based on series name
   if(m_LoadedImage->GetCustomNickname().length() == 0)

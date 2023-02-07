@@ -18,7 +18,7 @@ engine.findChild(mainwin, "btnAxial").click();
 
 // Get the axial panel
 var panel0 = engine.findChild(mainwin,"panel0");
-var sliceView0 = engine.findChild(panel0,"sliceView");
+var sliceViewInternalWidget0 = engine.findChild(engine.findChild(panel0, "sliceView"), "internalWidget");
 
 //=== Enter paintbrush mode
 engine.findChild(mainwin,"actionPaintbrush").trigger();
@@ -26,17 +26,17 @@ engine.findChild(mainwin,"actionPaintbrush").trigger();
 //=== Paint with foreground label
 setForegroundLabel("Label 1");
 setCursor(20,8,13);
-engine.postKeyEvent(sliceView0, "Space");
+engine.postKeyEvent(sliceViewInternalWidget0, "Space");
 
 //=== Paint with background label
 setForegroundLabel("Label 2");
 setCursor(10,24,13);
-engine.postKeyEvent(sliceView0, "Space");
+engine.postKeyEvent(sliceViewInternalWidget0, "Space");
 
 //=== Paint with background label
 setForegroundLabel("Label 3");
 setCursor(26,28,13);
-engine.postKeyEvent(sliceView0, "Space");
+engine.postKeyEvent(sliceViewInternalWidget0, "Space");
 
 //=== Perform classification
 engine.findChild(snakepanel,"btnClassifyTrain").click();
@@ -66,6 +66,10 @@ engine.sleep(1000);
 
 //=== Set step size
 engine.findChild(snakepanel,"inStepSize").value = 10;
+
+//=== Turn on continuous rendering
+var actionContUpdate = engine.findChild(mainwin,"actionContinuous_Update");
+actionContUpdate.trigger();
 
 //=== Run snake 100 iter
 for(var i = 0; i < 10; i++)

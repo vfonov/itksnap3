@@ -16,7 +16,6 @@
 #include "InputSelectionImageFilter.h"
 #include "Rebroadcaster.h"
 
-
 /* ===============================================================
     ColorLabelTableDisplayMappingPolicy implementation
    =============================================================== */
@@ -73,11 +72,11 @@ ColorLabelTableDisplayMappingPolicy<TWrapperTraits>
 template<class TWrapperTraits>
 typename ColorLabelTableDisplayMappingPolicy<TWrapperTraits>::DisplayPixelType
 ColorLabelTableDisplayMappingPolicy<TWrapperTraits>
-::MapPixel(const InputPixelType &val)
+::MapPixel(const InputComponentType *val)
 {
   DisplayPixelType pix;
   ColorLabelTable *table = this->m_RGBAFilter[0]->GetColorTable();
-  table->GetColorLabel(val).GetRGBAVector(pix.GetDataPointer());
+  table->GetColorLabel(*val).GetRGBAVector(pix.GetDataPointer());
   return pix;
 }
 
@@ -200,7 +199,7 @@ CachingCurveAndColorMapDisplayMappingPolicy<TWrapperTraits>
 template<class TWrapperTraits>
 void
 CachingCurveAndColorMapDisplayMappingPolicy<TWrapperTraits>
-::SetReferenceIntensityRange(ComponentObjectType *refMin, ComponentObjectType *refMax)
+::SetReferenceIntensityRange(const ComponentObjectType *refMin, const ComponentObjectType *refMax)
 {
   m_LookupTableFilter->SetImageMinInput(refMin);
   m_LookupTableFilter->SetImageMaxInput(refMax);
@@ -325,9 +324,9 @@ CachingCurveAndColorMapDisplayMappingPolicy<TWrapperTraits>
 template<class TWrapperTraits>
 typename CachingCurveAndColorMapDisplayMappingPolicy<TWrapperTraits>::DisplayPixelType
 CachingCurveAndColorMapDisplayMappingPolicy<TWrapperTraits>
-::MapPixel(const PixelType &val)
+::MapPixel(const InputComponentType *val)
 {
-  DisplayPixelType pix = m_IntensityFilter[0]->MapPixel(val);
+  DisplayPixelType pix = m_IntensityFilter[0]->MapPixel(*val);
   return pix;
 }
 
@@ -534,9 +533,9 @@ LinearColorMapDisplayMappingPolicy<TWrapperTraits>
 template<class TWrapperTraits>
 typename LinearColorMapDisplayMappingPolicy<TWrapperTraits>::DisplayPixelType
 LinearColorMapDisplayMappingPolicy<TWrapperTraits>
-::MapPixel(const PixelType &val)
+::MapPixel(const InputComponentType *val)
 {
-  DisplayPixelType pix = m_Functor(val);
+  DisplayPixelType pix = m_Functor(*val);
   return pix;
 }
 
@@ -690,6 +689,19 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
       }
     }
 
+  if(m_Wrapper->GetNumberOfComponents() == 2 &&
+     m_Wrapper->GetImage()->GetLargestPossibleRegion().GetSize()[2] == 1)
+    {
+    // For 2D images we add grid display to 2-component image layers
+    for(unsigned int i=0; i<3; ++i)
+      {
+      const auto rep = SCALAR_REP_MAGNITUDE;
+      m_DisplaySliceSelector[i]->AddSelectableInput(
+            MultiChannelDisplayMode(false, true, rep, 0),
+            m_Wrapper->GetScalarRepresentation(rep, 0)->GetDisplaySlice(i));
+      }
+    }
+
   // Set display mode to default
   SetDisplayMode(MultiChannelDisplayMode());
 }
@@ -716,9 +728,16 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
     }
   else if(mode.RenderAsGrid)
     {
-    if(nc != 3)
+    if(nc != 3 && nc != 2)
       throw IRISException("Grid rendering mode requested for %d component image", nc);
-    m_ScalarRepresentation = NULL;
+    if(nc == 3)
+      m_ScalarRepresentation = NULL;
+    if(nc == 2)
+      {
+      m_ScalarRepresentation =
+          m_Wrapper->GetScalarRepresentation(
+            SCALAR_REP_MAGNITUDE, 0);
+      }
     }
   else
     {
@@ -776,7 +795,7 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
 template<class TWrapperTraits>
 typename MultiChannelDisplayMappingPolicy<TWrapperTraits>::DisplayPixelType
 MultiChannelDisplayMappingPolicy<TWrapperTraits>
-::MapPixel(const PixelType &val)
+::MapPixel(const InputComponentType *val)
 {
   // This method should never be called directly for scalar modes (component, max, etc)
   // because VectorImageWrapper should delegate calling this function to the
@@ -793,7 +812,7 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
 template <class TWrapperTraits>
 void
 MultiChannelDisplayMappingPolicy<TWrapperTraits>
-::SetColorMap(ColorMap *map)
+::SetColorMap(ColorMap *)
 {
   // TODO: do we really need an implementation?
 }
@@ -804,7 +823,8 @@ bool
 MultiChannelDisplayMappingPolicy<TWrapperTraits>
 ::IsContrastMultiComponent() const
 {
-  if(m_DisplayMode.UseRGB || m_DisplayMode.RenderAsGrid || m_Animate)
+  if(m_DisplayMode.UseRGB ||
+     (m_DisplayMode.RenderAsGrid && m_Wrapper->GetNumberOfComponents() == 3) || m_Animate)
     return true;
 
   return false;
@@ -821,7 +841,8 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
   // The native range is global componentwise max/min when we are in RGB mode
   // or when we are in single component mode (because the curves are shared
   // between these display modes).
-  if(m_DisplayMode.UseRGB || m_DisplayMode.RenderAsGrid ||
+  if(m_DisplayMode.UseRGB ||
+     (m_DisplayMode.RenderAsGrid && m_Wrapper->GetNumberOfComponents() == 3) ||
      m_DisplayMode.SelectedScalarRep == SCALAR_REP_COMPONENT)
     {
     cmin = m_Wrapper->GetImageMinNative();
@@ -844,7 +865,7 @@ const ScalarImageHistogram *
 MultiChannelDisplayMappingPolicy<TWrapperTraits>
 ::GetHistogram(int nBins)
 {
-  if(m_DisplayMode.UseRGB || m_DisplayMode.RenderAsGrid)
+  if(m_DisplayMode.UseRGB || (m_DisplayMode.RenderAsGrid && m_Wrapper->GetNumberOfComponents() == 3))
     {
     // In RGB mode, we should return a pooled histogram of the data.
     return m_Wrapper->GetHistogram(nBins);
@@ -933,7 +954,8 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
     if(m_Wrapper && mode.UseRGB && m_Wrapper->GetNumberOfComponents() != 3)
       mode = MultiChannelDisplayMode();
 
-    if(m_Wrapper && mode.RenderAsGrid && m_Wrapper->GetNumberOfComponents() != 3)
+    if(m_Wrapper && mode.RenderAsGrid && m_Wrapper->GetNumberOfComponents() != 3
+       && m_Wrapper->GetNumberOfComponents() != 2)
       mode = MultiChannelDisplayMode();
 
     if(m_Wrapper && mode.SelectedComponent >= m_Wrapper->GetNumberOfComponents())
@@ -943,6 +965,10 @@ MultiChannelDisplayMappingPolicy<TWrapperTraits>
     }
 }
 
+
+
+// End of MeshDisplayPolicy Implementation
+//----------------------------------------
 
 template class ColorLabelTableDisplayMappingPolicy<LabelImageWrapperTraits>;
 

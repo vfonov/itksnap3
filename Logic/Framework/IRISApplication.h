@@ -40,7 +40,7 @@
 #include "ImageCoordinateTransform.h"
 #include "IRISDisplayGeometry.h"
 #include "itkImageRegion.h"
-#include "itkExceptionObject.h"
+#include "itkMacro.h"
 #include "GlobalState.h"
 #include "ColorLabelTable.h"
 #include "itkCommand.h"
@@ -63,7 +63,7 @@ class AbstractSlicePreviewFilterWrapper;
 class UnsupervisedClustering;
 class ImageWrapperBase;
 class MeshManager;
-class AbstractLoadImageDelegate;
+class AbstractOpenImageDelegate;
 class AbstractSaveImageDelegate;
 class IRISWarningList;
 class GaussianMixtureModel;
@@ -71,6 +71,7 @@ struct IRISDisplayGeometry;
 class LabelUseHistory;
 class ImageAnnotationData;
 class LabelImageWrapper;
+class ImageReadingProgressAccumulator;
 
 template <class TPixel, class TLabel, int VDim> class RandomForestClassifier;
 template <class TPixel, class TLabel, int VDim> class RFClassificationEngine;
@@ -157,6 +158,7 @@ public:
 
   // Declare events fired by this object
   FIRES(CursorUpdateEvent)
+  FIRES(CursorTimePointUpdateEvent)
   FIRES(MainImageDimensionsChangeEvent)
   FIRES(MainImagePoseChangeEvent)
   FIRES(LayerChangeEvent)
@@ -211,10 +213,11 @@ public:
    * directory. But it is also possible to provide a pointer to the ioHints, i.e.,
    * if the image is being as part of loading a workspace.
    */
-  ImageWrapperBase* LoadImageViaDelegate(const char *fname,
-                                         AbstractLoadImageDelegate *del,
+  ImageWrapperBase* OpenImageViaDelegate(const char *fname,
+                                         AbstractOpenImageDelegate *del,
                                          IRISWarningList &wl,
-                                         Registry *ioHints = NULL);
+																				 Registry *ioHints = NULL,
+																				 ImageReadingProgressAccumulator *irAccum = nullptr);
 
   /**
    * List available additional DICOM series that can be loaded given the currently
@@ -224,13 +227,13 @@ public:
   DicomSeriesTree ListAvailableSiblingDicomSeries();
 
   /**
-   * Load another dicom series via delegate. This is similar to LoadImageViaDelegate
+   * Load another dicom series via delegate. This is similar to OpenImageViaDelegate
    * but the input is a SeriesId assumed to be in the same DICOM directory as the
    * main image
    */
   void LoadAnotherDicomSeriesViaDelegate(unsigned long reference_layer_id,
                                          const char *series_id,
-                                         AbstractLoadImageDelegate *del,
+                                         AbstractOpenImageDelegate *del,
                                          IRISWarningList &wl);
 
   /**
@@ -251,7 +254,7 @@ public:
    * rid of the overlay role completely and just label layers as anatomical/segment-n
    * in which case the additive flag would actually begin to make some sense.
    */
-  void LoadImage(const char *fname, LayerRole role,
+  void OpenImage(const char *fname, LayerRole role,
                  IRISWarningList &wl,
                  Registry *meta_data_reg = NULL,
                  Registry *io_hints_reg = NULL,
@@ -355,6 +358,11 @@ public:
    * Add a new blank segmentation and select it
    */
   void AddBlankSegmentation();
+
+  /**
+   * Unload a specific mesh layer
+   */
+  void UnloadMeshLayer(unsigned long id);
 
   /**
    * Update the SNAP image data with an external speed image (e.g., 
@@ -478,6 +486,24 @@ public:
   Vector3ui GetCursorPosition() const;
 
   /**
+   * Set the current cursor time point. Like setting the cursor position, but
+   * changes which image time point is actively shown
+   */
+  void SetCursorTimePoint(unsigned int time_point, bool force = false);
+
+  /**
+   * Get the current time point
+   */
+  unsigned int GetCursorTimePoint() const;
+
+  /**
+   * Get the number of available time points. For now this just checks the main
+   * image but in the future it is possible to have a workspace-wide time variable
+   * that is not tied to the main image.
+   */
+  unsigned int GetNumberOfTimePoints() const;
+
+  /**
    * Export the current slice of the image into a file
    */
   void ExportSlice(AnatomicalDirection iSliceAnatomy, const char *file);
@@ -529,6 +555,11 @@ public:
    * Check if there is an image currently loaded in SNAP.
    */
   bool IsMainImageLoaded() const;
+
+  /**
+   * Return a pointer to the main image wrapper or nullptr if not loaded
+   */
+  ImageWrapperBase *GetMainImage() const;
 
   /**
     Load label descriptions from file
@@ -615,6 +646,12 @@ public:
    * Open an existing project.
    */
   void OpenProject(const std::string &proj_file, IRISWarningList &warn);
+
+  /**
+   * Get Moved File Path from the absolute file path in the original project file
+   */
+  static std::string GetMovedFilePath(std::string &project_dir_orig, std::string &project_dir_crnt,
+                               std::string &original_file_path);
 
   /**
    * Check if the project has modified since the last time it was saved. This

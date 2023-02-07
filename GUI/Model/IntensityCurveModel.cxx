@@ -9,7 +9,7 @@
 #include "LayerAssociation.txx"
 
 template class LayerAssociation<IntensityCurveLayerProperties,
-                                ImageWrapperBase,
+                                WrapperBase,
                                 IntensityCurveModelBase::PropertiesFactory>;
 
 
@@ -66,17 +66,27 @@ AbstractContinuousImageDisplayMappingPolicy *
 IntensityCurveModel
 ::GetDisplayPolicy()
 {
-  ImageWrapperBase *layer = this->GetLayer();
+  WrapperBase *layer = this->GetLayer();
   if(layer)
     return dynamic_cast<AbstractContinuousImageDisplayMappingPolicy *>
         (layer->GetDisplayMapping());
   return NULL;
 }
 
+void IntensityCurveModel::SetViewportReporter(ViewportSizeReporter *vr)
+{
+  m_ViewportReporter = vr;
+
+  // Histogram bin size depends on the viewport, so we rebroadcast resize events
+  // from the viewport reporter as updates of this model
+  Rebroadcast(vr, ViewportSizeReporter::ViewportResizeEvent(), ModelUpdateEvent());
+}
+
 void
 IntensityCurveModel
-::RegisterWithLayer(ImageWrapperBase *layer)
+::RegisterWithLayer(WrapperBase *layer)
 {
+	m_Layer = layer;
   IntensityCurveLayerProperties &p = GetProperties();
 
   // Listen to changes in the layer's intensity curve
@@ -85,6 +95,16 @@ IntensityCurveModel
 
   // Set a flag so we don't register a listener again
   p.SetObserverTag(tag);
+
+	// For mesh layers, also observe the wrapper histogram change event
+	// Because one layer can have multiple properties, and one property can have
+	// multiple components. Each component has its own histogram
+	if (dynamic_cast<MeshWrapperBase*>(m_Layer))
+		{
+		p.SetHistogramChangeObserverTag(
+					Rebroadcast(layer, WrapperHistogramChangeEvent(), ModelUpdateEvent()));
+		}
+
 
   // If this is the first time we are registered with this layer, we are going
   // to set the histogram cutoff optimally. The user may change this later so
@@ -96,24 +116,41 @@ IntensityCurveModel
   if(p.IsFirstTime())
     {
     // Set the cutoff automatically
-    const ScalarImageHistogram *hist = layer->GetHistogram(0);
-    p.SetHistogramCutoff(hist->GetReasonableDisplayCutoff(0.95, 0.6));
-    p.SetFirstTime(false);
+		UpdateHistogramCutoff();
+		p.SetFirstTime(false);
     }
 }
 
 void
 IntensityCurveModel
-::UnRegisterFromLayer(ImageWrapperBase *layer, bool being_deleted)
+::UpdateHistogramCutoff()
+{
+	IntensityCurveLayerProperties &p = GetProperties();
+	const ScalarImageHistogram *hist = m_Layer->GetHistogram(0);
+	p.SetHistogramCutoff(hist->GetReasonableDisplayCutoff(0.95, 0.6));
+}
+
+void
+IntensityCurveModel
+::UnRegisterFromLayer(WrapperBase *layer, bool being_deleted)
 {
   if(!being_deleted)
     {
     // It's safe to call GetProperties()
     unsigned long tag = GetProperties().GetObserverTag();
     if(tag)
-      {
-      layer->GetDisplayMapping()->RemoveObserver(tag);
-      }
+			{
+			layer->RemoveObserver(tag);
+			}
+
+		if (dynamic_cast<MeshWrapperBase*>(m_Layer))
+			{
+			unsigned long histoTag = GetProperties().GetHistogramChangeObserverTag();
+			if (histoTag)
+				{
+				layer->RemoveObserver(histoTag);
+				}
+			}
     }
 }
 
@@ -618,6 +655,9 @@ void IntensityCurveModel::OnResetCurveAction()
 void IntensityCurveModel::OnUpdate()
 {
   Superclass::OnUpdate();
+
+	if (m_EventBucket->HasEvent(WrapperHistogramChangeEvent()))
+		UpdateHistogramCutoff();
 }
 
 AbstractRangedDoubleProperty *
@@ -642,13 +682,14 @@ IntensityCurveModel
 ::GetHistogramBinSizeValueAndRange(
     int &value, NumericValueRange<int> *range)
 {
-  if(m_Layer)
+  auto layer = dynamic_cast<ImageWrapperBase*>(m_Layer);
+  if(layer)
     {
     value = (int) GetProperties().GetHistogramBinSize();
     if(range)
       {
       range->Minimum = 1;
-      range->Maximum = m_Layer->GetNumberOfVoxels() / 10;
+      range->Maximum = layer->GetNumberOfVoxels() / 10;
       range->StepSize = 1;
       }
     return true;

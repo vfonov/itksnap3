@@ -34,7 +34,6 @@
 =========================================================================*/
 #include "AllPurposeProgressAccumulator.h"
 #include "vtkCallbackCommand.h" 
-#include "itkCommand.h"
 #include "itkEventObject.h"
 #include <cassert>
 
@@ -545,6 +544,14 @@ void TrivalProgressSource::Callback(itk::Object *source, const itk::EventObject 
   // Invoke the source event
   if(itk::EndEvent().CheckEvent(&event))
     this->InvokeEvent(event);
+}
+
+void TrivalProgressSource
+::AddObserverToProgressEvents(itk::Command *cmd)
+{
+  this->AddObserver(itk::StartEvent(), cmd);
+  this->AddObserver(itk::ProgressEvent(), cmd);
+  this->AddObserver(itk::EndEvent(), cmd);
 }
 
 TrivalProgressSource::TrivalProgressSource() : m_MaxProgress(1.0) {}

@@ -57,15 +57,6 @@ ImageCoordinateGeometry
     }
 }
 
-ImageCoordinateGeometry
-::ImageCoordinateGeometry(DirectionMatrix imageDirection,
-                          const IRISDisplayGeometry &dispGeom,
-                          const Vector3ui &imageSize)
-{
-  SetGeometry(imageDirection,dispGeom,imageSize);
-}
-
-
 void
 ImageCoordinateGeometry
 ::SetGeometry(DirectionMatrix imageDirection,
@@ -288,7 +279,7 @@ ImageCoordinateGeometry::ConvertRAICodeToDirectionMatrix(
         {
         if(toupper(rai[i]) == m_RAICodes[j][k])
           {
-          dm.set_column(i, (k==0 ? 1.0 : -1.0) * eye.get_row(j));
+          dm.set_column(i, (k==0 ? 1.0 : -1.0) * eye.get_row(j).as_ref());
           }
         }
       }

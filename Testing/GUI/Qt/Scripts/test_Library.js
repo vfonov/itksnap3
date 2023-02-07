@@ -6,12 +6,23 @@ function setCursor(x, y, z)
   engine.findChild(mainwin, "inCursorZ").value = z;
   engine.sleep(200);
 }
+function setCursor4D(x, y, z, t)
+{
+    engine.print("Setting cursor position to " + x + ", " + y + ", " + z + ", " + t);
+    engine.findChild(mainwin, "inCursorX_4D").value = x;
+    engine.findChild(mainwin, "inCursorY_4D").value = y;
+    engine.findChild(mainwin, "inCursorZ_4D").value = z;
+    engine.findChild(mainwin, "inCursorT_4D").value = t;
+    engine.sleep(200);
+}
+
 function openMainImage(name)
 {
-  //=== Opening Dialog
+  //=== Opening 'Open Main' Dialog
   engine.findChild(mainwin,"actionOpenMain").trigger();
+  engine.sleep(2000);
 
-  //=== Entering Text
+  //=== Entering Filename
   var dialog = engine.findChild(mainwin, "wizImageIO");
   engine.findChild(dialog, "inFilename").text = datadir + "/" + name;
 
@@ -23,12 +34,36 @@ function openMainImage(name)
   engine.findChild(dialog, "qt_wizard_finish").click();
   engine.sleep(1000);
 }
+
+function openMesh(name)
+{
+    //=== Opening 'Open Mesh' Dialog
+    engine.findChild(mainwin, "actionAddMesh").trigger();
+    engine.sleep(2000);
+
+    //=== Entering Filename
+    var dialog = engine.findChild(mainwin, "wizMeshImport");
+    engine.print("file path=" + datadir + "/" + name);
+    engine.findChild(dialog, "inFilename").text = datadir + "/" + name;
+    engine.sleep(1000);
+
+    //=== Pressing the 'finish' button
+    engine.findChild(dialog, "qt_wizard_finish").click();
+    engine.sleep(1000);
+
+    //=== Pressing the 'OK' button
+    msgbox = engine.findChild(dialog, "msgboxNewLayer");
+    engine.findChild(msgbox, "btnOK").click();
+    engine.sleep(1000);
+}
+
 function openWorkspace(name)
 {
-  //=== Opening Dialog
+  //=== Opening 'Open Workspace' dialog
   engine.findChild(mainwin,"actionOpenWorkspace").trigger();
+  engine.sleep(2000);
 
-  //=== Entering Text
+  //=== Entering workspace filename
   var dialog = engine.findChild(mainwin, "dlgSimpleFile");
   engine.findChild(dialog, "inFilename").text = datadir + "/" + name;
 
@@ -43,10 +78,12 @@ function enterSnakeMode(pos_x, pos_y, pos_z, size_x, size_y, size_z)
 
   var roipanel = engine.findChild(mainwin, "pageSnakeTool");
 
-  //=== Setting ROI dimensions
+  //=== Setting ROI position
   engine.findChild(roipanel,"inIndexX").value = pos_x;
   engine.findChild(roipanel,"inIndexY").value = pos_y;
   engine.findChild(roipanel,"inIndexZ").value = pos_z;
+
+  //=== Setting ROI size
   engine.findChild(roipanel,"inSizeX").value = size_x;
   engine.findChild(roipanel,"inSizeY").value = size_y;
   engine.findChild(roipanel,"inSizeZ").value = size_z;

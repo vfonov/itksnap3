@@ -45,7 +45,7 @@ class SliceWindowCoordinator;
 class GuidedNativeImageIO;
 class SystemInterface;
 class GlobalState;
-class AbstractLoadImageDelegate;
+class AbstractOpenImageDelegate;
 class IRISWarningList;
 class IntensityCurveModel;
 class LayerSelectionModel;
@@ -68,6 +68,7 @@ class LayerGeneralPropertiesModel;
 class SynchronizationModel;
 class SnakeParameterModel;
 class MeshExportModel;
+class MeshImportModel;
 class GlobalPreferencesModel;
 class GlobalDisplaySettings;
 class ImageIOWizardModel;
@@ -76,6 +77,8 @@ class ColorLabelQuickListModel;
 class InterpolateLabelModel;
 class RegistrationModel;
 class DistributedSegmentationModel;
+class SmoothLabelsModel;
+class VoxelChangeReportModel;
 
 namespace itk
 {
@@ -235,6 +238,9 @@ public:
   /** Model for the mesh export wizard */
   irisGetMacro(MeshExportModel, MeshExportModel *)
 
+  /** Model for the mesh import wizard */
+  irisGetMacro(MeshImportModel, MeshImportModel *)
+
   /** Model for the preferences dialog */
   irisGetMacro(GlobalPreferencesModel, GlobalPreferencesModel *)
 
@@ -250,6 +256,13 @@ public:
   /** Model for distributed image segmentation */
   irisGetMacro(DistributedSegmentationModel, DistributedSegmentationModel *)
 
+  // issue #24
+  /** Model for label smoothing dialog */
+  irisGetMacro(SmoothLabelsModel, SmoothLabelsModel *)
+
+  /** Model for voxel change report dialog */
+  irisGetMacro(VoxelChangeReportModel, VoxelChangeReportModel *)
+
   /**
     Check the state of the system. This class will issue StateChangeEvent()
     when one of the flags has changed. This method can be used together with
@@ -259,6 +272,12 @@ public:
 
   /** Get the model for the cursor coordinates */
   irisGetMacro(CursorPositionModel, AbstractRangedUIntVec3Property *)
+
+  /** Get the model for 4D image time point */
+  irisGetMacro(CursorTimePointModel, AbstractRangedUIntProperty *)
+
+  /** Get the model for whether the workspace has 3D or 4D image data */
+  irisGetMacro(WorkspaceIs4DModel, AbstractSimpleBooleanProperty *)
 
   /** Get the models for the snake ROI */
   irisGetMacro(SnakeROIIndexModel, AbstractRangedUIntVec3Property *)
@@ -310,7 +329,7 @@ public:
    * conjunction with an IO wizard. We pass in the Layer and the LayerRole
    */
   SmartPtr<ImageIOWizardModel> CreateIOWizardModelForSave(
-      ImageWrapperBase *layer, LayerRole role);
+      ImageWrapperBase *layer, LayerRole role, bool crntTPOnly = false);
 
   /**
    * Perform an animation step
@@ -331,6 +350,9 @@ public:
 
   /** A function for switching between segmentation layers when there multiple */
   void CycleSelectedSegmentationLayer(int direction);
+
+  /** A function for UI to get the default 4D replay interval */
+  int GetDefault4DReplayInterval() const;
 
 
 protected:
@@ -432,11 +454,27 @@ protected:
   // Model for DSS
   SmartPtr<DistributedSegmentationModel> m_DistributedSegmentationModel;
 
+  // Issue #24: Model for Label Smoothing
+  SmartPtr<SmoothLabelsModel> m_SmoothLabelsModel;
+
+  // Issue #24: Voxel Change Report Model
+  SmartPtr<VoxelChangeReportModel> m_VoxelChangeReportModel;
+
   // Current coordinates of the cursor
   SmartPtr<AbstractRangedUIntVec3Property> m_CursorPositionModel;
   bool GetCursorPositionValueAndRange(
       Vector3ui &value, NumericValueRange<Vector3ui> *range);
   void SetCursorPosition(Vector3ui value);
+
+  // Current time point of the cursor
+  SmartPtr<AbstractRangedUIntProperty> m_CursorTimePointModel;
+  bool GetCursorTimePointValueAndRange(
+      unsigned int &value, NumericValueRange<unsigned int> *range);
+  void SetCursorTimePoint(unsigned int value);
+
+  // Whether or not the workspace has a time dimension
+  SmartPtr<AbstractSimpleBooleanProperty> m_WorkspaceIs4DModel;
+  bool GetWorkspaceIs4DValue(bool &value);
 
   // Current ROI for snake mode
   SmartPtr<AbstractRangedUIntVec3Property> m_SnakeROIIndexModel;
@@ -456,6 +494,9 @@ protected:
 
   // The model for the mesh export wizard
   SmartPtr<MeshExportModel> m_MeshExportModel;
+
+  // The model for the mesh import wizard
+  SmartPtr<MeshImportModel> m_MeshImportModel;
 
   // Global preferences model
   SmartPtr<GlobalPreferencesModel> m_GlobalPreferencesModel;

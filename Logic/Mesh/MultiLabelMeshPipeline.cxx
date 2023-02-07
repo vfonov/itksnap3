@@ -44,6 +44,7 @@
 #include "IRISVectorTypesToITKConversion.h"
 #include "VTKMeshPipeline.h"
 #include "MeshOptions.h"
+#include "vtkUnsignedShortArray.h"
 
 // ITK includes
 #include "itkBinaryThresholdImageFilter.h"
@@ -211,7 +212,7 @@ void MultiLabelMeshPipeline::UpdateMeshes(itk::Command *progressCommand)
   itk::Index<3> run_start;
 
   // The length of a line
-  unsigned long line_length = m_InputImage->GetLargestPossibleRegion().GetSize()[0];
+  //unsigned long line_length = m_InputImage->GetLargestPossibleRegion().GetSize()[0];
 
   // Iterate through the image updating the mesh map. This code takes advantage
   // of the organization of label data. Rather than updating the extents after
@@ -226,7 +227,7 @@ void MultiLabelMeshPipeline::UpdateMeshes(itk::Command *progressCommand)
     const InputIterator::RLLine &line=*(it.rlLine);
     int t = 0;
     // Iterate through the line
-    for (int x = 0; x < line.size(); x++)
+    for (size_t x = 0; x < line.size(); x++)
       {
       run_start[0] = t;
       current_label = line[x].second;
@@ -257,7 +258,6 @@ void MultiLabelMeshPipeline::UpdateMeshes(itk::Command *progressCommand)
       it++;
     }
 
-
   // Deal with progress accumulation
   SmartPtr<AllPurposeProgressAccumulator> progress = AllPurposeProgressAccumulator::New();
   progress->AddObserver(itk::ProgressEvent(), progressCommand);
@@ -278,6 +278,8 @@ void MultiLabelMeshPipeline::UpdateMeshes(itk::Command *progressCommand)
       info.BoundingBox[0] = it->second.BoundingBox[0];
       info.BoundingBox[1] = it->second.BoundingBox[1];
       info.Mesh = NULL;
+
+      //auto src = m_VTKPipeline->GetProgressAccumulator();
 
       // Capture progress from this mesh
       progress->RegisterSource(m_VTKPipeline->GetProgressAccumulator(), info.Count);
@@ -333,7 +335,7 @@ void MultiLabelMeshPipeline::UpdateMeshes(itk::Command *progressCommand)
 
 void 
 MultiLabelMeshPipeline
-::SetImage(MultiLabelMeshPipeline::InputImageType *image)
+::SetImage(const InputImageType *image)
 {
   if(m_InputImage != image)
     {
@@ -362,3 +364,78 @@ std::map<LabelType, vtkSmartPointer<vtkPolyData> > MultiLabelMeshPipeline::GetMe
     meshes[it->first] = it->second.Mesh;
   return meshes;
 }
+
+SmartPtr<MultiLabelMeshPipeline>
+MultiLabelMeshPipelineTable::GetPipeline(unsigned int timepoint)
+{
+  return m_table[timepoint];
+}
+
+void
+MultiLabelMeshPipelineTable::SetPipeline(unsigned int timepoint, SmartPtr<MultiLabelMeshPipeline> pipeline)
+{
+  m_table[timepoint] = pipeline;
+  uint32_t size = GetPipelineMemorySize(pipeline);
+  m_MemoryUsage += size;
+
+  // Remove item from the front of the table if memory usage exceeds threshold
+  // -- but will keep item if it's the only item in the table
+  // -- because we still want to render single huge mesh
+  if (m_MemoryUsage > m_MemoryLimit && m_table.size() > 1)
+    {
+      //printf("[table trimming] usage = %u MB\n", m_MemoryUsage);
+      m_MemoryUsage -= GetPipelineMemorySize(m_table.begin()->second);
+      m_table.erase(m_table.begin());
+    }
+}
+
+uint32_t
+MultiLabelMeshPipelineTable::GetPipelineMemorySize(SmartPtr<MultiLabelMeshPipeline> pipeline)
+{
+  std::map<LabelType, vtkSmartPointer<vtkPolyData>> collection = pipeline->GetMeshCollection();
+  uint32_t sum = 0;
+  for (auto pair : collection)
+    {
+      sum += (pair.second->GetActualMemorySize())/1024;
+    }
+  return sum;
+}
+
+void
+MultiLabelMeshPipelineTable::printMeshSize()
+{
+  for (auto pit = m_table.cbegin(); pit != m_table.cend(); ++pit)
+  {
+    unsigned int timepoint = pit->first;
+    cout << "Timepoint: " << timepoint << "------------------------" << endl;
+    double totalSize = 0;
+    SmartPtr<MultiLabelMeshPipeline> pipeline = pit->second;
+    auto meshTable = pipeline->GetMeshCollection();
+    for (auto mit = meshTable.cbegin(); mit != meshTable.cend(); ++mit)
+      {
+        LabelType lbl = mit->first;
+        auto pMesh = mit->second;
+        unsigned long size = pMesh->GetActualMemorySize();
+        printf("Label %d: %d KB\n", lbl, (int) size);
+        totalSize += size / 1024.0;
+      }
+    cout << "Total Size: " << totalSize << " MB" << endl;
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

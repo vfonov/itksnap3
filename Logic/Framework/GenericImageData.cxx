@@ -54,6 +54,9 @@
 #include "LayerIterator.h"
 #include "GuidedNativeImageIO.h"
 #include "ImageAnnotationData.h"
+#include "RLERegionOfInterestImageFilter.h"
+#include "TimePointProperties.h"
+#include "ImageMeshLayers.h"
 
 // System includes
 #include <fstream>
@@ -72,6 +75,12 @@ GenericImageData
 
   // Create empty annotations
   m_Annotations = ImageAnnotationData::New();
+
+  // Create TimePointProperties
+  m_TimePointProperties = TimePointProperties::New();
+  m_TimePointProperties->SetParent(this);
+	Rebroadcaster::Rebroadcast(m_TimePointProperties, WrapperGlobalMetadataChangeEvent(),
+														 this, WrapperGlobalMetadataChangeEvent());
 
   // Initialize the display viewport geometry objects
   m_DisplayViewportGeometry[0] = ImageBaseType::New();
@@ -137,11 +146,11 @@ GenericImageData::CreateAnatomicWrapper(GuidedNativeImageIO *io, ITKTransformTyp
   if(io->GetNumberOfComponentsInNativeImage() > 1)
     {
     // The image will be cast to a vector anatomic image
-    typedef AnatomicImageWrapper::ImageType AnatomicImageType;
+    typedef AnatomicImageWrapper::Image4DType AnatomicImage4DType;
 
     // Rescale the image to desired number of bits
-    RescaleNativeImageToIntegralType<AnatomicImageType> rescaler;
-    AnatomicImageType::Pointer image = rescaler(io);
+    RescaleNativeImageToIntegralType<AnatomicImage4DType> rescaler;
+    AnatomicImage4DType::Pointer image = rescaler(io);
 
     // Create a mapper to native intensity
     LinearInternalToNativeIntensityMapping mapper(
@@ -152,7 +161,7 @@ GenericImageData::CreateAnatomicWrapper(GuidedNativeImageIO *io, ITKTransformTyp
 
     // Set properties
     wrapper->SetDisplayGeometry(m_DisplayGeometry);
-    wrapper->SetImage(image, refSpace, transform);
+    wrapper->SetImage4D(image, refSpace, transform);
     wrapper->SetNativeMapping(mapper);
     for(int i = 0; i < 3; i++)
       wrapper->SetDisplayViewportGeometry(i, m_DisplayViewportGeometry[i]);
@@ -163,11 +172,11 @@ GenericImageData::CreateAnatomicWrapper(GuidedNativeImageIO *io, ITKTransformTyp
   else
     {
     // Rescale the image to desired number of bits
-    typedef AnatomicScalarImageWrapper::ImageType AnatomicImageType;
+    typedef AnatomicScalarImageWrapper::Image4DType AnatomicImage4DType;
 
     // Rescale the image to desired number of bits
-    RescaleNativeImageToIntegralType<AnatomicImageType> rescaler;
-    AnatomicImageType::Pointer image = rescaler(io);
+    RescaleNativeImageToIntegralType<AnatomicImage4DType> rescaler;
+    AnatomicImage4DType::Pointer image = rescaler(io);
 
     // Create a mapper to native intensity
     LinearInternalToNativeIntensityMapping mapper(
@@ -178,7 +187,7 @@ GenericImageData::CreateAnatomicWrapper(GuidedNativeImageIO *io, ITKTransformTyp
 
     // Set properties
     wrapper->SetDisplayGeometry(m_DisplayGeometry);
-    wrapper->SetImage(image, refSpace, transform);
+    wrapper->SetImage4D(image, refSpace, transform);
     wrapper->SetNativeMapping(mapper);
 
     for(int i = 0; i < 3; i++)
@@ -215,8 +224,14 @@ GenericImageData
   // Unload all the segmentations
   this->RemoveAllWrappers(LABEL_ROLE);
 
+  // Unload all the meshes
+  m_MeshLayers->Unload();
+
   // Clear the annotations
   m_Annotations->Reset();
+
+  // Clear timepoint properties
+  m_TimePointProperties->Reset();
 }
 
 
@@ -293,39 +308,97 @@ void GenericImageData
   this->RemoveImageWrapper(OVERLAY_ROLE, overlay);
 }
 
-
-LabelImageWrapper *
+void
 GenericImageData
-::SetSingleSegmentationImage(GenericImageData::LabelImageType *image)
+::UnloadMeshLayer(unsigned long id)
 {
-  // Unload all segmentation wrappers
-  this->RemoveAllWrappers(LABEL_ROLE);
-
-  // Add this segmentation
-  return this->AddSegmentationImage(image);
+  m_MeshLayers->RemoveLayer(id);
 }
 
+SmartPtr<GenericImageData::LabelImage4DType>
+GenericImageData
+::CompressSegmentation(GuidedNativeImageIO *io)
+{
+  // Check that the image matches the size of the grey image
+  itkAssertOrThrowMacro(
+        m_MainImageWrapper->IsInitialized(),
+        "Main image not initialized in GenericImageData::CompressSegmentation");
+
+  // This is the uncompressed representation of the segmentation
+  typedef itk::Image<LabelType, 4> UncompressedImage4DType;
+
+  // Cast the native to label type
+  CastNativeImage<UncompressedImage4DType> caster;
+  UncompressedImage4DType::Pointer imgUncompressed = caster(io);
+
+  //use specialized RoI filter to convert to RLEImage
+  typedef LabelImageWrapper::Image4DType LabelImage4DType;
+  typedef itk::RegionOfInterestImageFilter<UncompressedImage4DType, LabelImage4DType> inConverterType;
+  inConverterType::Pointer inConv = inConverterType::New();
+  inConv->SetInput(imgUncompressed);
+  inConv->SetRegionOfInterest(imgUncompressed->GetLargestPossibleRegion());
+  inConv->Update();
+  LabelImage4DType::Pointer imgLabel = inConv->GetOutput();
+  imgUncompressed = NULL; //deallocate intermediate image to save memory
+
+  // Disconnect from the pipeline right away
+  imgLabel->DisconnectPipeline();
+
+  // The header of the label image is made to match that of the grey image
+  imgLabel->SetOrigin(this->GetMain()->GetImage4DBase()->GetOrigin());
+  imgLabel->SetSpacing(this->GetMain()->GetImage4DBase()->GetSpacing());
+  imgLabel->SetDirection(this->GetMain()->GetImage4DBase()->GetDirection());
+
+  // Return the image
+  return imgLabel;
+}
+
+void
+GenericImageData
+::ConfigureSegmentationFromMainImage(LabelImageWrapper *wrapper)
+{
+  // Main Image should exist
+  assert(m_MainImageWrapper->IsInitialized());
+
+  // Segmentation and Main Image should have same slice index
+  wrapper->SetSliceIndex(m_MainImageWrapper->GetSliceIndex());
+
+  // Set default nickname
+  wrapper->SetDefaultNickname(this->GenerateNickname(LABEL_ROLE));
+
+  // Send the color table to the new wrapper
+  wrapper->GetDisplayMapping()->SetLabelColorTable(m_Parent->GetColorLabelTable());
+
+  // Sync up spacing between the main and label image
+  wrapper->CopyImageCoordinateTransform(m_MainImageWrapper);
+}
 
 LabelImageWrapper *
 GenericImageData
-::AddSegmentationImage(LabelImageType *addedLabelImage)
+::SetSegmentationImage(GuidedNativeImageIO *io, bool add_to_existing)
 {
   // Check that the image matches the size of the grey image
-  assert(m_MainImageWrapper->IsInitialized() &&
-    m_MainImageWrapper->GetBufferedRegion() ==
-         addedLabelImage->GetBufferedRegion());
+  itkAssertOrThrowMacro(
+        m_MainImageWrapper->IsInitialized(),
+        "Main image not initialized in GenericImageData::AddSegmentationImage");
+
+  // Create a compressed image from the IO
+  SmartPtr<LabelImage4DType> imgLabel = CompressSegmentation(io);
 
   // Create a new wrapper of label type
   SmartPtr<LabelImageWrapper> seg_wrapper = LabelImageWrapper::New();
   seg_wrapper->InitializeToWrapper(m_MainImageWrapper, (LabelType) 0);
-  seg_wrapper->SetImage(addedLabelImage);
-  seg_wrapper->SetDefaultNickname(this->GenerateNickname(LABEL_ROLE));
+  seg_wrapper->SetImage4D(imgLabel);
 
-  // Send the color table to the new wrapper
-  seg_wrapper->GetDisplayMapping()->SetLabelColorTable(m_Parent->GetColorLabelTable());
+  // Configure the new wrapper
+  this->ConfigureSegmentationFromMainImage(seg_wrapper);
 
-  // Sync up spacing between the main and label image
-  seg_wrapper->CopyImageCoordinateTransform(m_MainImageWrapper);
+  // Update filenames
+  seg_wrapper->SetFileName(io->GetFileNameOfNativeImage());
+
+  // Remove loaded segmentation unless adding to existing
+  if(!add_to_existing)
+    this->RemoveAllWrappers(LABEL_ROLE);
 
   // Add the segmentation label to the list of segmentation wrappers
   PushBackImageWrapper(LABEL_ROLE, seg_wrapper);
@@ -338,6 +411,27 @@ GenericImageData
   return seg_wrapper;
 }
 
+void GenericImageData
+::UpdateSegmentationTimePoint(LabelImageWrapper *wrapper, GuidedNativeImageIO *io)
+{
+  // Check that the image matches the size of the grey image
+  itkAssertOrThrowMacro(
+        m_MainImageWrapper->IsInitialized(),
+        "Main image not initialized in GenericImageData::UpdateSegmentationTimePoint");
+
+  // Create a compressed image from the IO
+  SmartPtr<LabelImage4DType> imgLabel = CompressSegmentation(io);
+
+  // Drop the dimension of the 4D image to 3D. We can reuse existing code in ImageWrapper
+  // for doing this
+  SmartPtr<LabelImageWrapper> temp_wrapper = LabelImageWrapper::New();
+  temp_wrapper->SetImage4D(imgLabel);
+
+  // Update the target wrapper
+  // TODO: make this operation undo-able!
+  wrapper->UpdateTimePoint(temp_wrapper->GetModifiableImage());
+}
+
 LabelImageWrapper *GenericImageData::AddBlankSegmentation()
 {
   assert(m_MainImageWrapper->IsInitialized());
@@ -345,9 +439,10 @@ LabelImageWrapper *GenericImageData::AddBlankSegmentation()
   // Initialize the segmentation data to zeros
   LabelImageWrapper::Pointer seg = LabelImageWrapper::New();
   seg->InitializeToWrapper(m_MainImageWrapper, (LabelType) 0);
-  seg->SetDefaultNickname(this->GenerateNickname(LABEL_ROLE));
 
-  seg->GetDisplayMapping()->SetLabelColorTable(m_Parent->GetColorLabelTable());
+  // Configure the new wrapper
+  this->ConfigureSegmentationFromMainImage(seg);
+
   this->PushBackImageWrapper(LABEL_ROLE, seg.GetPointer());
 
   // Intensity changes in the image wrapper are broadcast as segmentation events
@@ -361,8 +456,16 @@ LabelImageWrapper *GenericImageData::AddBlankSegmentation()
 void GenericImageData
 ::UnloadSegmentation(ImageWrapperBase *seg)
 {
+  auto id = seg->GetUniqueId();
+
   // Erase the segmentation image
   this->RemoveImageWrapper(LABEL_ROLE, seg);
+
+  // If it has mesh, also remove it
+  if (m_MeshLayers->HasMeshForImage(id))
+    {
+    m_MeshLayers->RemoveLayer(m_MeshLayers->GetMeshForImage(id)->GetUniqueId());
+    }
 
   // If main is loaded and this is the only segmentation, reset so that
   // there is a blank segmentation left
@@ -398,7 +501,27 @@ GenericImageData
   // Set crosshairs in all wrappers
   for(LayerIterator lit(this); !lit.IsAtEnd(); ++lit)
     if(lit.GetLayer() && lit.GetLayer()->IsInitialized())
-      lit.GetLayer()->SetSliceIndex(crosshairs);
+      lit.GetLayer()->SetSliceIndex(to_itkIndex(crosshairs));
+}
+
+void
+GenericImageData
+::SetTimePoint(unsigned int time_point)
+{
+  // Set the time point in all wrappers
+  for(LayerIterator lit(this); !lit.IsAtEnd(); ++lit)
+    {
+    if(lit.GetLayer() && lit.GetLayer()->IsInitialized())
+      {
+      // Time point is handled a little differently from the cursor. The
+      // main image and overlays may have different number of timepoints.
+      // The idea is only to allow N-N, N-1 or 1-N combinations, i.e., the
+      // main image has N time points, and then overlays have either 1 or N.
+      // We can simply use modulo to make this work
+      unsigned int tp = time_point % lit.GetLayer()->GetNumberOfTimePoints();
+      lit.GetLayer()->SetTimePointIndex(tp);
+      }
+    }
 }
 
 void GenericImageData::SetDisplayGeometry(const IRISDisplayGeometry &dispGeom)
@@ -427,7 +550,7 @@ void GenericImageData::SetDirectionMatrix(const vnl_matrix<double> &direction)
       }
 }
 
-const ImageCoordinateGeometry &GenericImageData::GetImageGeometry() const
+const ImageCoordinateGeometry *GenericImageData::GetImageGeometry() const
 {
   assert(m_MainImageWrapper->IsInitialized());
   return m_MainImageWrapper->GetImageGeometry();
@@ -439,7 +562,7 @@ void GenericImageData::ClearUndoPoints()
     {
     LabelImageWrapper *liw = dynamic_cast<LabelImageWrapper *>(lit.GetLayer());
     if(liw)
-      liw->ClearUndoPoints();
+      liw->ClearUndoPointsForAllTimePoints();
     }
 }
 
@@ -587,7 +710,13 @@ void GenericImageData::RemoveImageWrapper(LayerRole role,
   WrapperIterator it =
       std::find(wrappers.begin(), wrappers.end(), wrapper);
   if(it != wrappers.end())
+    {
+    auto *volume = it->GetPointer()->GetUserData("volume");
+    if (volume)
+      it->GetPointer()->RemoveUserData("volume");
+
     wrappers.erase(it);
+    }
 
   // Fire the layer change event
   this->InvokeEvent(LayerChangeEvent());
@@ -664,5 +793,11 @@ std::string GenericImageData::GenerateNickname(LayerRole role)
 void GenericImageData::AddOverlay(ImageWrapperBase *new_layer)
 {
   this->AddOverlayInternal(new_layer, true);
+}
+
+ImageMeshLayers *
+GenericImageData::GetMeshLayers()
+{
+  return m_MeshLayers;
 }
 

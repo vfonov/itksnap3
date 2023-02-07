@@ -13,16 +13,18 @@
 #include "IRISImageData.h"
 #include "GuidedNativeImageIO.h"
 #include <QTimer>
+#include "LayoutReminderDialog.h"
+#include "MeshImportModel.h"
+#include <QtWidgetActivator.h>
+#include "LatentITKEventNotifier.h"
+#include "AllPurposeProgressAccumulator.h"
+#include "MeshImportWizard.h"
 
 DropActionDialog::DropActionDialog(QWidget *parent) :
   QDialog(parent),
   ui(new Ui::DropActionDialog)
 {
   ui->setupUi(this);
-
-  // Start from scratch
-  ApplyCSS(this, ":/root/itksnap.css");
-
 }
 
 DropActionDialog::~DropActionDialog()
@@ -38,12 +40,55 @@ void DropActionDialog::SetDroppedFilename(QString name)
 void DropActionDialog::SetModel(GlobalUIModel *model)
 {
   m_Model = model;
+
+  activateOnFlag(ui->btnLoadMeshToTP, m_Model, UIF_MESH_TP_LOADABLE,
+                 QtWidgetActivator::HideInactive);
+
+  LatentITKEventNotifier::connect(
+        m_Model, ActiveLayerChangeEvent(),
+        this, SLOT(onModelUpdate(EventBucket)));
+
+}
+
+void
+DropActionDialog
+::onModelUpdate(const EventBucket &bucket)
+{
+  if (bucket.HasEvent(ActiveLayerChangeEvent()))
+    this->update();
+}
+
+void
+DropActionDialog
+::SetIncludeMeshOptions(bool include_mesh)
+{
+  if (!include_mesh)
+    {
+    ui->btnLoadMeshAsLayer->hide();
+    ui->btnLoadMeshToTP->hide();
+    }
+  else
+    {
+    ui->btnLoadMeshAsLayer->show();
+    }
+
+}
+
+void DropActionDialog::InitialLoad(QString name)
+{
+  LoadMainImage(name);
 }
 
 void DropActionDialog::LoadMainImage(QString name)
 {
   this->SetDroppedFilename(name);
   this->on_btnLoadMain_clicked();
+}
+
+void DropActionDialog::LoadMesh(QString name)
+{
+  this->SetDroppedFilename(name);
+  this->on_btnLoadMeshAsLayer_clicked();
 }
 
 void DropActionDialog::on_btnLoadMain_clicked()
@@ -55,6 +100,84 @@ void DropActionDialog::on_btnLoadMain_clicked()
   SmartPtr<LoadMainImageDelegate> del = LoadMainImageDelegate::New();
   del->Initialize(m_Model->GetDriver());
   this->LoadCommon(del);
+}
+
+void DropActionDialog::on_btnLoadMeshAsLayer_clicked()
+{
+  // Get file extension
+  std::string fn = ui->outFilename->text().toStdString();
+  // Get the file extension with the dot. e.g. ".vtk"
+  std::string ext = fn.substr(fn.find_last_of("."));
+  std::vector<std::string> fn_list { fn };
+
+  // Create a message box reminding user
+  unsigned int displayTP = m_Model->GetDriver()->GetCursorTimePoint() + 1; // always display 1-based time point
+  QMessageBox *msgBox = MeshImportWizard::CreateLoadToNewLayerMessageBox(this, displayTP);
+  int ret = msgBox->exec();
+  delete msgBox;
+
+  switch (ret)
+    {
+    case QMessageBox::Ok:
+      {
+      auto fmt = GuidedMeshIO::GetFormatByExtension(ext);
+      if (fmt != GuidedMeshIO::FORMAT_COUNT)
+        {
+          auto model = m_Model->GetMeshImportModel();
+          model->Load(fn_list, fmt, displayTP);
+        }
+      this->accept();
+      return;
+      }
+    case QMessageBox::Cancel:
+    default:
+      {
+      this->reject();
+      return;
+      }
+    }
+}
+
+void DropActionDialog::on_btnLoadMeshToTP_clicked()
+{
+  // Get file extension
+  std::string fn = ui->outFilename->text().toStdString();
+  // Get the file extension with the dot. e.g. ".vtk"
+  std::string ext = fn.substr(fn.find_last_of("."));
+
+  auto fmt = GuidedMeshIO::GetFormatByExtension(ext);
+  if (fmt == GuidedMeshIO::FORMAT_COUNT)
+    {
+    QMessageBox msgBox;
+    std::ostringstream oss;
+    oss << "Unsupported mesh file type (" << ext << ")!";
+    msgBox.setText(oss.str().c_str());
+    msgBox.exec();
+    this->reject();
+    return;
+    }
+
+  unsigned int displayTP = m_Model->GetDriver()->GetCursorTimePoint() + 1; // always display 1-based tp index
+  QMessageBox *box = MeshImportWizard::CreateLoadToTimePointMessageBox(this, displayTP);
+  int ret = box->exec();
+  delete box;
+
+  switch (ret)
+    {
+    case QMessageBox::Ok:
+      {
+      auto model = m_Model->GetMeshImportModel();
+      model->LoadToTP(fn.c_str(), fmt);
+      this->accept();
+      return;
+      }
+    case QMessageBox::Cancel:
+    default:
+      {
+      this->reject();
+      return;
+      }
+    }
 }
 
 void DropActionDialog::on_btnLoadSegmentation_clicked()
@@ -103,10 +226,11 @@ void DropActionDialog::on_btnLoadNew_clicked()
     }
 }
 
+
 #include "ImageIOWizardModel.h"
 #include "ImageIOWizard.h"
 
-void DropActionDialog::LoadCommon(AbstractLoadImageDelegate *delegate)
+void DropActionDialog::LoadCommon(AbstractOpenImageDelegate *delegate)
 {
   // File being loaded
   std::string file = to_utf8(ui->outFilename->text());
@@ -157,20 +281,40 @@ void DropActionDialog::LoadCommon(AbstractLoadImageDelegate *delegate)
     {
     // Load without the wizard
     QtCursorOverride c(Qt::WaitCursor);
+
+		// Show a progress dialog
+		auto parentWidget = static_cast<QWidget*>(this->parent());
+		using namespace imageiowiz;
+		ImageIOProgressDialog::ScopedPointer progress(new ImageIOProgressDialog(parentWidget));
+		this->hide();
+		progress->display();
+
+		SmartPtr<ImageReadingProgressAccumulator> irProgAccum =
+				ImageReadingProgressAccumulator::New();
+		irProgAccum->AddObserver(itk::ProgressEvent(), progress->createCommand());
+
     try
       {
       IRISWarningList warnings;
-      m_Model->GetDriver()->LoadImageViaDelegate(file.c_str(), delegate, warnings, &ioHints);
+			m_Model->GetDriver()->OpenImageViaDelegate(file.c_str(), delegate, warnings, &ioHints, irProgAccum);
       this->accept();
       }
     catch(exception &exc)
       {
+      progress->close();
       QMessageBox b(this);
       b.setText(QString("Failed to load image %1").arg(ui->outFilename->text()));
       b.setDetailedText(exc.what());
       b.setIcon(QMessageBox::Critical);
       b.exec();
       }
+    }
+
+  if (fmt == GuidedNativeImageIO::FORMAT_ECHO_CARTESIAN_DICOM)
+    {
+      LayoutReminderDialog *lr = new LayoutReminderDialog(this);
+      lr->Initialize(m_Model);
+      lr->ConditionalExec(LayoutReminderDialog::Echo_Cartesian_Dicom_Loading);
     }
 }
 

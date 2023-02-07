@@ -2,6 +2,7 @@
 #define DISPLAYMAPPINGPOLICY_H
 
 #include "ImageWrapperBase.h"
+#include "MeshWrapperBase.h"
 #include "itkDataObject.h"
 #include "itkObjectFactory.h"
 #include "IntensityToColorLookupTableImageFilter.h"
@@ -11,6 +12,7 @@ class ColorLabelTable;
 class LabelToRGBAFilter;
 class IntensityCurveVTK;
 class Registry;
+class ActorMapperPool;
 template <class TEnum> class RegistryEnumMap;
 template <class T, class U> class LookupTableIntensityMappingFilter;
 template <class T> class RGBALookupTableIntensityMappingFilter;
@@ -74,6 +76,7 @@ public:
   typedef ImageWrapperBase::DisplaySlicePointer DisplaySlicePointer;
 
   typedef InputSliceType::PixelType InputPixelType;
+  typedef InputSliceType::InternalPixelType InputComponentType;
   typedef DisplaySliceType::PixelType DisplayPixelType;
 
   /**
@@ -97,7 +100,7 @@ public:
   virtual void Save(Registry &folder) ITK_OVERRIDE {}
   virtual void Restore(Registry &folder) ITK_OVERRIDE {}
 
-  virtual DisplayPixelType MapPixel(const InputPixelType &val);
+  virtual DisplayPixelType MapPixel(const InputComponentType *val);
 
 protected:
 
@@ -110,6 +113,7 @@ protected:
   RGBAFilterPointer m_RGBAFilter[3];
   WrapperType *m_Wrapper;
 };
+
 
 /**
  * @brief The parent class for the policies that involve curve-based mappings,
@@ -171,12 +175,6 @@ public:
 };
 
 
-
-
-
-
-
-
 template<class TWrapperTraits>
 class CachingCurveAndColorMapDisplayMappingPolicy
     : public AbstractCachingAndColorMapDisplayMappingPolicy
@@ -191,6 +189,7 @@ public:
   typedef typename ImageType::PixelType PixelType;
   typedef typename TWrapperTraits::ComponentType ComponentType;
   typedef itk::Image<PixelType, 2> InputSliceType;
+  typedef typename InputSliceType::InternalPixelType InputComponentType;
 
   typedef ImageWrapperBase::DisplaySliceType DisplaySliceType;
   typedef ImageWrapperBase::DisplaySlicePointer DisplaySlicePointer;
@@ -219,8 +218,8 @@ public:
    * in the imagewrapper is a subregion of another image, or when the image is
    * a component of a multi-component image.
    */
-  void SetReferenceIntensityRange(ComponentObjectType *refMin,
-                                  ComponentObjectType *refMax);
+  void SetReferenceIntensityRange(const ComponentObjectType *refMin,
+                                  const ComponentObjectType *refMax);
 
   void ClearReferenceIntensityRange();
 
@@ -258,7 +257,7 @@ public:
   virtual void Save(Registry &folder) ITK_OVERRIDE;
   virtual void Restore(Registry &folder) ITK_OVERRIDE;
 
-  virtual DisplayPixelType MapPixel(const PixelType &val);
+  virtual DisplayPixelType MapPixel(const InputComponentType *val);
 
 
 protected:
@@ -356,6 +355,8 @@ public:
   typedef typename ImageType::PixelType PixelType;
 
   typedef itk::Image<PixelType, 2> InputSliceType;
+  typedef typename InputSliceType::InternalPixelType InputComponentType;
+
   typedef ImageWrapperBase::DisplaySliceType DisplaySliceType;
   typedef ImageWrapperBase::DisplaySlicePointer DisplaySlicePointer;
   typedef ImageWrapperBase::DisplayPixelType DisplayPixelType;
@@ -372,7 +373,7 @@ public:
 
   irisGetMacroWithOverride(ColorMap, ColorMap *)
 
-  DisplayPixelType MapPixel(const PixelType &xin);
+  DisplayPixelType MapPixel(const InputComponentType *val);
 
 protected:
 
@@ -431,6 +432,7 @@ public:
   typedef typename ImageType::InternalPixelType InternalPixelType;
 
   typedef itk::Image<InternalPixelType, 2> InputSliceType;
+  typedef typename InputSliceType::InternalPixelType InputComponentType;
 
   typedef ImageWrapperBase::DisplaySliceType DisplaySliceType;
   typedef ImageWrapperBase::DisplaySlicePointer DisplaySlicePointer;
@@ -472,7 +474,7 @@ public:
 
   irisGetMacro(ScalarRepresentation, ScalarImageWrapperBase *)
 
-  DisplayPixelType MapPixel(const PixelType &val);
+  DisplayPixelType MapPixel(const InputComponentType *val);
 
 protected:
 
@@ -500,7 +502,6 @@ protected:
     DisplaySliceType, MultiChannelDisplayMode> DisplaySliceSelector;
   SmartPtr<DisplaySliceSelector> m_DisplaySliceSelector[3];
 };
-
 
 
 #endif // DISPLAYMAPPINGPOLICY_H

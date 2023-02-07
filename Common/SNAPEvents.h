@@ -57,6 +57,9 @@ itkEventMacro(NullEvent, IRISEvent)
 /** 3D cursor update event */
 itkEventMacro(CursorUpdateEvent, IRISEvent)
 
+/** 4D cursor timepoint update event */
+itkEventMacro(CursorTimePointUpdateEvent, IRISEvent)
+
 /** The set of layers loaded into SNAP has changed */
 itkEventMacro(LayerChangeEvent, IRISEvent)
 
@@ -71,6 +74,9 @@ itkEventMacro(SegmentationChangeEvent, IRISEvent)
 
 /** The level set image has changed (due to iteration) */
 itkEventMacro(LevelSetImageChangeEvent, IRISEvent)
+
+/** The active layer id has changed */
+itkEventMacro(ActiveLayerChangeEvent, IRISEvent)
 
 /** Change to the speed image */
 itkEventMacro(SpeedImageChangedEvent, LayerChangeEvent)
@@ -127,11 +133,17 @@ itkEventMacro(WrapperVisibilityChangeEvent, WrapperMetadataChangeEvent)
 /** A change to the display mapping of an image wrapper (e.g. color map) */
 itkEventMacro(WrapperDisplayMappingChangeEvent, WrapperChangeEvent)
 
+/** A change to the mesh vector mode */
+itkEventMacro(WrapperHistogramChangeEvent, WrapperDisplayMappingChangeEvent)
+
 /** A change to wrapper-associated user data */
 itkEventMacro(WrapperUserDataChangeEvent, WrapperChangeEvent)
 
 /** A change to the intensity values in the wrapper */
 itkEventMacro(WrapperImageChangeEvent, WrapperChangeEvent)
+
+/** A change to the global metadata for all wrappers, such as timepoint properties */
+itkEventMacro(WrapperGlobalMetadataChangeEvent, WrapperChangeEvent)
 
 /** A change to wrapper-associated image processing settings */
 itkEventMacro(WrapperProcessingSettingsChangeEvent, WrapperUserDataChangeEvent)

@@ -6,8 +6,9 @@
 #include "SNAPCommon.h"
 #include <QWidgetAction>
 
-class LayerTableRowModel;
+class AbstractLayerTableRowModel;
 class ImageWrapperBase;
+class WrapperBase;
 class QMenu;
 class QActionGroup;
 class QContextMenuEvent;
@@ -67,9 +68,9 @@ public:
   explicit LayerInspectorRowDelegate(QWidget *parent = 0);
   ~LayerInspectorRowDelegate();
 
-  void SetModel(LayerTableRowModel *model);
+  void SetModel(AbstractLayerTableRowModel *model);
 
-  ImageWrapperBase *GetLayer() const;
+  WrapperBase *GetLayer() const;
 
   bool selected() const { return m_Selected; }
 
@@ -80,21 +81,21 @@ public:
   // Get the context menu for this item
   QMenu *contextMenu() const;
 
-  void enterEvent(QEvent *);
-  void leaveEvent(QEvent *);
+  virtual void enterEvent(QEnterEvent *) override;
+  virtual void leaveEvent(QEvent *) override;
 
-  void mousePressEvent(QMouseEvent *);
-  void mouseMoveEvent(QMouseEvent *);
-  void mouseReleaseEvent(QMouseEvent *);
-  void contextMenuEvent(QContextMenuEvent *evt);
+  virtual void mousePressEvent(QMouseEvent *) override;
+  virtual void mouseMoveEvent(QMouseEvent *) override;
+  virtual void mouseReleaseEvent(QMouseEvent *) override;
+  virtual void contextMenuEvent(QContextMenuEvent *evt) override;
 
-  bool eventFilter(QObject *, QEvent *);
+  virtual bool eventFilter(QObject *, QEvent *) override;
 
 public slots:
 
   void setSelected(bool value);
 
-  virtual void onModelUpdate(const EventBucket &bucket);
+  virtual void onModelUpdate(const EventBucket &bucket) override;
 
 signals:
   void selectionChanged(bool);
@@ -133,7 +134,7 @@ private:
   // It is very important here that we keep a smart pointer to the model,
   // rather than a regular pointer. That's because the layer itself may
   // be deleted, in which case, there will be noone kept holding the model.
-  SmartPtr<LayerTableRowModel> m_Model;
+  SmartPtr<AbstractLayerTableRowModel> m_Model;
 
   bool m_Selected;
   bool m_Hover;
@@ -144,7 +145,7 @@ private:
   QMenu *m_PopupMenu;
 
   // A submenu for the color maps
-  QMenu *m_ColorMapMenu, *m_DisplayModeMenu, *m_OverlaysMenu;
+  QMenu *m_ColorMapMenu, *m_DisplayModeMenu, *m_OverlaysMenu, *m_VolumeRenderingMenu;
 
   // Slider for opacity that lives in the menu
   QSlider *m_OverlayOpacitySlider;

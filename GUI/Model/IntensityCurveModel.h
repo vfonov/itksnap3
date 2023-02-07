@@ -39,6 +39,8 @@ public:
 
   irisGetSetMacro(ObserverTag, unsigned long)
 
+	irisGetSetMacro(HistogramChangeObserverTag, unsigned long)
+
   IntensityCurveLayerProperties();
   virtual ~IntensityCurveLayerProperties();
 
@@ -59,11 +61,14 @@ protected:
 
   // Whether or not we are already listening to events from this layer
   unsigned long m_ObserverTag;
+
+	// Observer tag for mesh vector mode change to update histogram cutoff
+	unsigned long m_HistogramChangeObserverTag;
 };
 
 typedef AbstractLayerAssociatedModel<
     IntensityCurveLayerProperties,
-    ImageWrapperBase> IntensityCurveModelBase;
+    WrapperBase> IntensityCurveModelBase;
 
 /**
   The intensity curve model is used to interact with the intensity curve in
@@ -85,11 +90,12 @@ public:
 
 
   /** Before using the model, it must be coupled with a size reporter */
-  irisGetSetMacro(ViewportReporter, ViewportSizeReporter *)
+  irisGetMacro(ViewportReporter, ViewportSizeReporter *)
+  void SetViewportReporter(ViewportSizeReporter *vr);
 
   // Implementation of virtual functions from parent class
-  void RegisterWithLayer(ImageWrapperBase *layer) ITK_OVERRIDE;
-  void UnRegisterFromLayer(ImageWrapperBase *layer, bool being_deleted) ITK_OVERRIDE;
+  void RegisterWithLayer(WrapperBase *layer) ITK_OVERRIDE;
+  void UnRegisterFromLayer(WrapperBase *layer, bool being_deleted) ITK_OVERRIDE;
 
 
   /**
@@ -170,6 +176,8 @@ public:
   // models are specified by an index
   AbstractRangedDoubleProperty *GetIntensityRangeModel(
       IntensityRangePropertyType index) const;
+
+	void UpdateHistogramCutoff();
 
   void OnAutoFitWindow();
 protected:

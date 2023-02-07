@@ -49,7 +49,6 @@
 #include "MeshExportSettings.h"
 #include "SegmentationStatistics.h"
 #include "RLEImageRegionIterator.h"
-#include "RLERegionOfInterestImageFilter.h"
 #include "itkPasteImageFilter.h"
 #include "itkIdentityTransform.h"
 #include "itkResampleImageFilter.h"
@@ -86,6 +85,10 @@
 #include "ImageAnnotationData.h"
 #include "SegmentationUpdateIterator.h"
 #include "AffineTransformHelper.h"
+#include "TimePointProperties.h"
+#include "ImageMeshLayers.h"
+#include "StandaloneMeshWrapper.h"
+#include "AllPurposeProgressAccumulator.h"
 
 #include <stdio.h>
 #include <sstream>
@@ -126,6 +129,8 @@ IRISApplication
 
   Rebroadcaster::RebroadcastAsSourceEvent(m_IRISImageData, LayerChangeEvent(), this);
   Rebroadcaster::RebroadcastAsSourceEvent(m_SNAPImageData, LayerChangeEvent(), this);
+
+  Rebroadcaster::RebroadcastAsSourceEvent(m_IRISImageData, ActiveLayerChangeEvent(), this);
 
   // TODO: should this also be a generic Wrapper Image Data change event?
   Rebroadcaster::RebroadcastAsSourceEvent(m_SNAPImageData, LevelSetImageChangeEvent(), this);
@@ -172,7 +177,7 @@ IRISApplication
 {
   assert(m_CurrentImageData->IsMainLoaded());
   return ImageCoordinateGeometry::IsDirectionMatrixOblique(
-    m_CurrentImageData->GetImageGeometry().GetImageDirectionCosineMatrix());
+    m_CurrentImageData->GetImageGeometry()->GetImageDirectionCosineMatrix());
 }
 
 
@@ -182,7 +187,7 @@ GetImageToAnatomyRAI()
 {
   assert(m_CurrentImageData->IsMainLoaded());
   return ImageCoordinateGeometry::ConvertDirectionMatrixToClosestRAICode(
-    m_CurrentImageData->GetImageGeometry().GetImageDirectionCosineMatrix());
+    m_CurrentImageData->GetImageGeometry()->GetImageDirectionCosineMatrix());
 }
 
 IRISApplication
@@ -229,8 +234,11 @@ IRISApplication
   // Record whether the segmentation has any values that are not zero
   m_GlobalState->SetSnakeInitializedWithManualSegmentation(nCopied > 0);
 
-  // Pass the cleaned up segmentation image to SNAP
-  m_SNAPImageData->SetSingleSegmentationImage(imgNewLabel);
+  // Pass the cleaned up segmentation image to SNAP. The segmentation should currently
+  // include a single empty wrapper. We want to update the current timepoint of this
+  // wrapper with the supplied segmentation image
+  LabelImageWrapper *liw = m_SNAPImageData->GetFirstSegmentationLayer();
+  liw->UpdateTimePoint(imgNewLabel);
 
   // Pass the label description of the drawing label to the SNAP image data
   m_SNAPImageData->SetColorLabel(
@@ -279,7 +287,7 @@ IRISApplication
     m_SNAPImageData->InitializeSpeed();
   
   // Send the speed image to the image data
-  m_SNAPImageData->GetSpeed()->SetImage(newSpeedImage);
+  m_SNAPImageData->GetSpeed()->UpdateTimePoint(newSpeedImage);
 
   // Save the snake mode 
   m_GlobalState->SetSnakeType(snakeMode);
@@ -366,6 +374,13 @@ void IRISApplication::UnloadAllOverlays()
   m_GlobalState->SetSelectedLayerId(m_IRISImageData->GetMain()->GetUniqueId());
 }
 
+void
+IRISApplication
+::UnloadMeshLayer(unsigned long id)
+{
+  m_IRISImageData->UnloadMeshLayer(id);
+}
+
 void IRISApplication
 ::ChangeOverlayPosition(ImageWrapperBase *overlay, int dir)
 {
@@ -408,17 +423,19 @@ IRISApplication
 void IRISApplication::SetColorLabelsInSegmentationAsValid(LabelImageWrapper *seg_wrapper)
 {
   // Iterate over the RLEs in the label image
+  typedef LabelImageWrapperTraits::Image4DType LabelImage4DType;
+  typedef itk::ImageRegionConstIterator<LabelImage4DType::BufferType> RLLineIter;
+  RLLineIter rlit(seg_wrapper->GetImage4D()->GetBuffer(),
+                  seg_wrapper->GetImage4D()->GetBuffer()->GetBufferedRegion());
+
   LabelType last_label = 0;
-  typedef itk::ImageRegionConstIterator<LabelImageType::BufferType> RLLineIter;
-  RLLineIter rlit(seg_wrapper->GetImage()->GetBuffer(),
-                  seg_wrapper->GetImage()->GetBuffer()->GetBufferedRegion());
   for(; !rlit.IsAtEnd(); ++rlit)
     {
     // Get the line
     const LabelImageType::RLLine &line = rlit.Value();
 
     // Iterate over the entries
-    for(int i = 0; i < line.size(); i++)
+    for(unsigned int i = 0; i < line.size(); i++)
       {
       LabelType label = line[i].second;
       if(label != last_label)
@@ -436,28 +453,8 @@ LabelImageWrapper *IRISApplication::UpdateSNAPSegmentationImage(GuidedNativeImag
   // This has to happen in 'pure' SNAP mode
   assert(IsSnakeModeActive());
 
-  typedef itk::Image<LabelType, 3> UncompressedImageType;
-
-  // Cast the native to label type
-  CastNativeImage<UncompressedImageType> caster;
-  UncompressedImageType::Pointer imgUncompressed = caster(io);
-
-  //use specialized RoI filter to convert to RLEImage
-  typedef itk::RegionOfInterestImageFilter<UncompressedImageType, LabelImageType> inConverterType;
-  inConverterType::Pointer inConv = inConverterType::New();
-  inConv->SetInput(imgUncompressed);
-  inConv->SetRegionOfInterest(imgUncompressed->GetLargestPossibleRegion());
-  inConv->Update();
-  LabelImageType::Pointer imgLabel = inConv->GetOutput();
-  imgUncompressed = NULL; //deallocate intermediate image to save memory
-
-  // The header of the label image is made to match that of the grey image
-  imgLabel->SetOrigin(m_CurrentImageData->GetMain()->GetImageBase()->GetOrigin());
-  imgLabel->SetSpacing(m_CurrentImageData->GetMain()->GetImageBase()->GetSpacing());
-  imgLabel->SetDirection(m_CurrentImageData->GetMain()->GetImageBase()->GetDirection());
-
-  // Update the iris data
-  LabelImageWrapper *snap_seg = m_CurrentImageData->SetSingleSegmentationImage(imgLabel);
+  // Update the SNAP data (segmentation is always replaced, not added)
+  LabelImageWrapper *snap_seg = m_CurrentImageData->SetSegmentationImage(io, false);
 
   // Update filenames
   snap_seg->SetFileName(io->GetFileNameOfNativeImage());
@@ -480,42 +477,37 @@ IRISApplication
 ::UpdateIRISSegmentationImage(GuidedNativeImageIO *io, Registry *metadata, bool add_to_existing)
 {
   // This has to happen in 'pure' IRIS mode
-  assert(!IsSnakeModeActive());
+  itkAssertOrThrowMacro(!IsSnakeModeActive(),
+                        "IRISApplication::UpdateIRISSegmentationImage called in snake mode");
 
-  typedef itk::Image<LabelType, 3> UncompressedImageType;
-
-  // Cast the native to label type
-  CastNativeImage<UncompressedImageType> caster;
-  UncompressedImageType::Pointer imgUncompressed = caster(io);
-
-  //use specialized RoI filter to convert to RLEImage
-  typedef itk::RegionOfInterestImageFilter<UncompressedImageType, LabelImageType> inConverterType;
-  inConverterType::Pointer inConv = inConverterType::New();
-  inConv->SetInput(imgUncompressed);
-  inConv->SetRegionOfInterest(imgUncompressed->GetLargestPossibleRegion());
-  inConv->Update();
-  LabelImageType::Pointer imgLabel = inConv->GetOutput();
-  imgUncompressed = NULL; //deallocate intermediate image to save memory
-
-  // Disconnect from the pipeline right away
-  imgLabel->DisconnectPipeline();
-  
-  // The header of the label image is made to match that of the grey image
-  imgLabel->SetOrigin(m_CurrentImageData->GetMain()->GetImageBase()->GetOrigin());
-  imgLabel->SetSpacing(m_CurrentImageData->GetMain()->GetImageBase()->GetSpacing());
-  imgLabel->SetDirection(m_CurrentImageData->GetMain()->GetImageBase()->GetDirection());
+  // Check timepoint agreement
+  unsigned int ntMain = m_IRISImageData->GetMain()->GetNumberOfTimePoints();
+  unsigned int ntSeg = io->GetDimensionsOfNativeImage()[3];
+  itkAssertOrThrowMacro(ntMain == ntSeg || ntSeg == 1,
+                        "Time point mismatch in IRISApplication::UpdateIRISSegmentationImage");
 
   // Update the iris data
-  LabelImageWrapper *seg_wrapper =
-      add_to_existing
-      ? m_IRISImageData->AddSegmentationImage(imgLabel)
-      : m_IRISImageData->SetSingleSegmentationImage(imgLabel);
+  LabelImageWrapper *seg_wrapper;
+  if(ntMain == ntSeg)
+    {
+    // Replace existing segmentation image with new image
+    seg_wrapper = m_IRISImageData->SetSegmentationImage(io, add_to_existing);
 
-  // Update filenames
-  seg_wrapper->SetFileName(io->GetFileNameOfNativeImage());
+    // Load the metadata for this layer
+    LoadMetaDataAssociatedWithLayer(seg_wrapper, LABEL_ROLE, metadata);
 
-  // Load the metadata for this layer
-  LoadMetaDataAssociatedWithLayer(seg_wrapper, LABEL_ROLE, metadata);
+    // Update the selected segmentation image
+    m_GlobalState->SetSelectedSegmentationLayerId(seg_wrapper->GetUniqueId());
+    }
+  else
+    {
+    // Update the current time point in the image with the loaded segmentation
+    seg_wrapper = dynamic_cast<LabelImageWrapper *>(
+      m_IRISImageData->FindLayer(
+        m_GlobalState->GetSelectedSegmentationLayerId(), false, LABEL_ROLE));
+    
+    m_IRISImageData->UpdateSegmentationTimePoint(seg_wrapper, io);
+    }
 
   // Update the history
   m_SystemInterface->GetHistoryManager()->UpdateHistory(
@@ -524,9 +516,6 @@ IRISApplication
   // Update the color label table with the segmentation values in the current segmentation
   // Iterate over the RLEs in the label image
   this->SetColorLabelsInSegmentationAsValid(seg_wrapper);
-
-  // Update the selected segmentation image
-  m_GlobalState->SetSelectedSegmentationLayerId(seg_wrapper->GetUniqueId());
 
   // Let the GUI know that segmentation changed
   InvokeEvent(SegmentationChangeEvent());
@@ -574,9 +563,6 @@ IRISApplication
     double zSlice,
     const std::string &undoTitle)
 {
-  // Get the segmentation image
-  LabelImageType *seg = this->GetSelectedSegmentationLayer()->GetImage();
-
   // Turn the 2D region of the drawing into a 3D region in the segmentation
   IRISApplication::SliceBinaryImageType::RegionType r_draw = drawing->GetBufferedRegion();
 
@@ -619,10 +605,10 @@ IRISApplication
   LabelImageType::RegionType r_vol;
   r_vol.SetIndex(to_itkIndex(pos_min));
   r_vol.SetUpperIndex(to_itkIndex(pos_max));
-  r_vol.Crop(seg->GetBufferedRegion());
+  r_vol.Crop(this->GetSelectedSegmentationLayer()->GetBufferedRegion());
 
   // Create an iterator for painting
-  SegmentationUpdateIterator itVol(seg, r_vol,
+  SegmentationUpdateIterator itVol(this->GetSelectedSegmentationLayer(), r_vol,
                                    m_GlobalState->GetDrawingColorLabel(),
                                    m_GlobalState->GetDrawOverFilter());
 
@@ -653,12 +639,9 @@ IRISApplication
     }
 
   // Finalize
-  itVol.Finalize();
-
-  // Store update
-  if(itVol.GetNumberOfChangedVoxels() > 0)
+  if(itVol.Finalize(undoTitle.c_str()))
     {
-    this->GetSelectedSegmentationLayer()->StoreUndoPoint(undoTitle.c_str(), itVol.RelinquishDelta());
+    // Voxels were updated
     this->RecordCurrentLabelUse();
     InvokeEvent(SegmentationChangeEvent());
     }
@@ -678,14 +661,13 @@ IRISApplication
 
   // If the voxel size of the image does not match the voxel size of the 
   // main image, we need to resample the region  
-  SourceImageType::Pointer source = m_SNAPImageData->GetSnake()->GetImage();
+  SourceImageType::ConstPointer source = m_SNAPImageData->GetSnake()->GetImage();
 
   // The target segmentation is whatever was last selected in IRIS, which we stored
   // in a local variable before entering SNAP mode
   LabelImageWrapper *iris_seg = dynamic_cast<LabelImageWrapper *>(
                                   m_IRISImageData->FindLayer(
                                     m_SavedIRISSelectedSegmentationLayerId, false));
-  TargetImageType::Pointer target = iris_seg->GetImage();
 
   // Construct are region of interest into which the result will be pasted
   SNAPSegmentationROISettings roi = m_GlobalState->GetSegmentationROISettings();
@@ -740,7 +722,7 @@ IRISApplication
     // Set the image sizes and spacing. We are creating an image of the 
     // dimensions of the ROI defined in the IRIS image space. 
     fltSample->SetSize(roi.GetROI().GetSize());
-    fltSample->SetOutputSpacing(target->GetSpacing());
+    fltSample->SetOutputSpacing(iris_seg->GetImageBase()->GetSpacing());
     fltSample->SetOutputOrigin(source->GetOrigin());
     fltSample->SetOutputDirection(source->GetDirection());
 
@@ -764,7 +746,7 @@ IRISApplication
 
   // Create the smart target iterator
   SegmentationUpdateIterator itTarget(
-        target, roi.GetROI(),
+        iris_seg, roi.GetROI(),
         m_GlobalState->GetDrawingColorLabel(), m_GlobalState->GetDrawOverFilter());
 
   // Inversion state
@@ -785,13 +767,9 @@ IRISApplication
     ++itTarget;
     }
 
-  // Finalize the segmentation
-  itTarget.Finalize();
-
-  // Store the undo delta
-  if(itTarget.GetNumberOfChangedVoxels() > 0)
+  // Finalize the segmentation and store undo point
+  if(itTarget.Finalize("Automatic Segmentation"))
     {
-    iris_seg->StoreUndoPoint("Automatic Segmentation", itTarget.RelinquishDelta());
     RecordCurrentLabelUse();
     InvokeEvent(SegmentationChangeEvent());
     }
@@ -818,6 +796,40 @@ IRISApplication
   return m_GlobalState->GetCrosshairsPosition();
 }
 
+void
+IRISApplication
+::SetCursorTimePoint(unsigned int time_point, bool force)
+{
+  if(time_point != this->GetCursorTimePoint() || force)
+    {
+    this->GetCurrentImageData()->SetTimePoint(time_point);
+
+    // Fire the appropriate event
+    InvokeEvent(CursorUpdateEvent());
+    InvokeEvent(CursorTimePointUpdateEvent());
+    InvokeEvent(SegmentationChangeEvent());
+    }
+}
+
+unsigned int
+IRISApplication
+::GetCursorTimePoint() const
+{
+  if (!this->GetCurrentImageData()->IsMainLoaded())
+    return 0;
+
+  return this->GetCurrentImageData()->GetMain()->GetTimePointIndex();
+}
+
+unsigned int
+IRISApplication
+::GetNumberOfTimePoints() const
+{
+  if (!this->GetCurrentImageData()->IsMainLoaded())
+    return 0;
+
+  return this->GetCurrentImageData()->GetMain()->GetNumberOfTimePoints();
+}
 
 
 void
@@ -1060,10 +1072,11 @@ IRISApplication
 ::ExportSegmentationMesh(const MeshExportSettings &sets, itk::Command *progress) 
 {
   // Update the list of VTK meshes
-  m_MeshManager->UpdateVTKMeshes(progress);
+  m_MeshManager->UpdateVTKMeshes(progress, this->GetSelectedSegmentationLayer()->GetTimePointIndex());
 
   // Get the list of available labels
-  MeshManager::MeshCollection meshes = m_MeshManager->GetMeshes();
+  MeshManager::MeshCollection meshes = m_MeshManager->GetMeshes(
+        this->GetSelectedSegmentationLayer()->GetTimePointIndex());
   MeshManager::MeshCollection::iterator it;
 
   // If in SNAP mode, just save the first mesh
@@ -1169,29 +1182,22 @@ size_t
 IRISApplication
 ::ReplaceLabel(LabelType drawing, LabelType drawover)
 {
-  // Get the label image
-  LabelImageWrapper::ImageType *imgLabel = this->GetSelectedSegmentationLayer()->GetImage();
+  // Create an update iterator
+  SegmentationUpdateIterator it(this->GetSelectedSegmentationLayer(),
+                                this->GetSelectedSegmentationLayer()->GetBufferedRegion(),
+                                drawing, DrawOverFilter(PAINT_OVER_ONE, drawover));
 
-  // Get the number of voxels
-  size_t nvoxels = 0;
-
-  // Update the segmentation
-  typedef itk::ImageRegionIterator<
-    LabelImageWrapper::ImageType> IteratorType;
-  for(IteratorType it(imgLabel, imgLabel->GetBufferedRegion());  
-    !it.IsAtEnd(); ++it)
-    {
-    if(it.Get() == drawover)
-      {
-      it.Set(drawing);
-      ++nvoxels;
-      }
-    }
+  // Perform iteration
+  for(; !it.IsAtEnd(); ++it)
+    it.PaintAsForeground();
 
   // Register that the image has been updated
-  imgLabel->Modified();
+  if(it.Finalize("Replace label"))
+    {
+    this->InvokeEvent(SegmentationChangeEvent());
+    }
 
-  return nvoxels;
+  return it.GetNumberOfChangedVoxels();
 }
 
 // TODO: This information should be cached at the segmentation layer level
@@ -1208,7 +1214,7 @@ IRISApplication
       !it.IsAtEnd(); ++it)
     {
     LabelImageWrapper *wrapper = dynamic_cast<LabelImageWrapper *>(it.GetLayer());
-    LabelImageType *seg = wrapper->GetImage();
+    const LabelImageType *seg = wrapper->GetImage();
 
     // Get the number of voxels
     for(LabelImageWrapper::ConstIterator it(seg, seg->GetBufferedRegion());
@@ -1228,11 +1234,11 @@ IRISApplication
 ::RelabelSegmentationWithCutPlane(const Vector3d &normal, double intercept) 
 {
   // Get the label image
-  LabelImageWrapper::ImageType *imgLabel = this->GetSelectedSegmentationLayer()->GetImage();
+  LabelImageWrapper *seg = this->GetSelectedSegmentationLayer();
   
   // Create the smart target iterator
   SegmentationUpdateIterator it(
-        imgLabel, imgLabel->GetBufferedRegion(),
+        seg, seg->GetBufferedRegion(),
         m_GlobalState->GetDrawingColorLabel(), m_GlobalState->GetDrawOverFilter());
 
   // Adjust the intercept by 0.5 for voxel offset
@@ -1257,12 +1263,11 @@ IRISApplication
     }
 
   // Finalize
-  it.Finalize();
+
 
   // Store the undo point if needed
-  if(it.GetNumberOfChangedVoxels() > 0)
+  if(it.Finalize("3D scalpel"))
     {
-    this->GetSelectedSegmentationLayer()->StoreUndoPoint("3D scalpel", it.RelinquishDelta());
     RecordCurrentLabelUse();
     InvokeEvent(SegmentationChangeEvent());
     }
@@ -1279,7 +1284,7 @@ IRISApplication
   LabelImageWrapper *xLabelWrapper = this->GetSelectedSegmentationLayer();
   assert(xLabelWrapper->IsInitialized());
 
-  Vector3ui lIndex;
+  itk::Index<3> lIndex;
   Vector3ui lSize = xLabelWrapper->GetSize();
 
   double delta[3][3] = {{0.,0.,0.},{0.,0.,0.},{0.,0.,0.}}, dratio[3] = {0., 0., 0.};
@@ -1331,9 +1336,9 @@ IRISApplication
     //    lx = my_round(px-0.5);
     //    ly = my_round(py-0.5);
     //    lz = my_round(pz-0.5);
-    lIndex[0] = (int)px;
-    lIndex[1] = (int)py;
-    lIndex[2] = (int)pz;
+    lIndex[0] = (int) px;
+    lIndex[1] = (int) py;
+    lIndex[2] = (int) pz;
 
     LabelType hitlabel = xLabelWrapper->GetVoxel(lIndex);
 
@@ -1425,10 +1430,9 @@ IRISApplication
 
   // Test if the image is in the same size as the main image
   ImageWrapperBase *main = this->m_IRISImageData->GetMain();
-  bool same_size = (main->GetSize() == io->GetDimensionsOfNativeImage());
 
-  // Now test the 3D geometry of the image to see if it occupies the same space
-  bool same_space = true;
+  // Check for compatibility of overlay image and main image
+  bool same_size = true, same_space = true;
 
   // Read the transform from the registry. This method will return an identity transform
   // even if no registry was provided
@@ -1440,6 +1444,8 @@ IRISApplication
 
   for(int i = 0; i < 3; i++)
     {
+    if(main->GetSize()[i] != io->GetDimensionsOfNativeImage()[i])
+      same_size = false;
     if(fabs(io->GetNativeImage()->GetOrigin()[i] - main->GetImageBase()->GetOrigin()[i]) > tol)
       same_space = false;
     if(fabs(io->GetNativeImage()->GetSpacing()[i] - main->GetImageBase()->GetSpacing()[i]) > tol)
@@ -1454,11 +1460,6 @@ IRISApplication
   // TODO: in situations where the size is the same and space is different, we may want
   // to ask the user how to handle it, or at least display a warning? For now, we just use
   // the header information, which may be different from how old ITK-SNAP handled this
-
-  // Old code - prevented registration of same-size images
-  // if(same_size && same_space && id_transform)
-  //  m_IRISImageData->AddOverlay(io);
-  // else
   m_IRISImageData->AddCoregOverlay(io, transform);
 
   ImageWrapperBase *layer = m_IRISImageData->GetLastOverlay();
@@ -1550,7 +1551,7 @@ IRISApplication
   // Get a pointer to the policy for this layer
   AbstractContinuousImageDisplayMappingPolicy *policy =
       dynamic_cast<AbstractContinuousImageDisplayMappingPolicy *>(
-        m_IRISImageData->GetMain()->GetDisplayMapping());
+        layer->GetDisplayMapping());
 
   // The policy must be of the right type to proceed
   if(policy)
@@ -1611,7 +1612,7 @@ IRISApplication
   m_HistoryManager->UpdateHistory("AnatomicImage", io->GetFileNameOfNativeImage(), false);
 
   // Reset the segmentation ROI
-  m_GlobalState->SetSegmentationROI(io->GetNativeImage()->GetBufferedRegion());
+  m_GlobalState->SetSegmentationROI(m_IRISImageData->GetMain()->GetBufferedRegion());
 
   // Read and apply the project-level settings associated with the main image
   LoadMetaDataAssociatedWithLayer(layer, MAIN_ROLE, metadata);
@@ -1651,6 +1652,9 @@ IRISApplication
   // Make the new segmentation selected (at this point there is only one to choose from)
   m_GlobalState->SetSelectedSegmentationLayerId(
         this->GetIRISImageData()->GetFirstSegmentationLayer()->GetUniqueId());
+
+  // Reset timepoint properties
+  m_IRISImageData->GetTimePointProperties()->CreateNewData();
 }
 
 void IRISApplication::LoadMetaDataAssociatedWithLayer(
@@ -1802,12 +1806,28 @@ IRISApplication
 
 ImageWrapperBase *
 IRISApplication
-::LoadImageViaDelegate(const char *fname,
-                       AbstractLoadImageDelegate *del,
+::OpenImageViaDelegate(const char *fname,
+                       AbstractOpenImageDelegate *del,
                        IRISWarningList &wl,
-                       Registry *ioHints)
+											 Registry *ioHints,
+											 ImageReadingProgressAccumulator *irAccum)
 {
   Registry regAssoc;
+
+	SmartPtr<itk::Command> headerProgCmd = DoNothingCommandSingleton::GetInstance().GetCommand();
+	SmartPtr<itk::Command> dataProgCmd = DoNothingCommandSingleton::GetInstance().GetCommand();
+	SmartPtr<itk::Command> miscProgCmd = DoNothingCommandSingleton::GetInstance().GetCommand();
+
+	if (irAccum)
+		{
+		headerProgCmd = irAccum->GetHeaderProgressCommand();
+		dataProgCmd = irAccum->GetDataProgressCommand();
+		miscProgCmd = irAccum->GetMiscProgressCommand();
+		}
+
+	SmartPtr<TrivalProgressSource> miscProgSrc = TrivalProgressSource::New();
+  miscProgSrc->AddObserverToProgressEvents(miscProgCmd);
+  miscProgSrc->StartProgress();
 
   // When hints are not provided, we load them using the association system
   if(!ioHints)
@@ -1823,7 +1843,7 @@ IRISApplication
   SmartPtr<GuidedNativeImageIO> io = GuidedNativeImageIO::New();
 
   // Load the header of the image
-  io->ReadNativeImageHeader(fname, *ioHints);
+	io->ReadNativeImageHeader(fname, *ioHints, headerProgCmd);
 
   // Validate the header
   del->ValidateHeader(io, wl);
@@ -1832,13 +1852,15 @@ IRISApplication
   del->UnloadCurrentImage();
 
   // Read the image body
-  io->ReadNativeImageData();
+	io->ReadNativeImageData(dataProgCmd);
 
   // Validate the image data
   del->ValidateImage(io, wl);
 
   // Put the image in the right place
   ImageWrapperBase *layer = del->UpdateApplicationWithImage(io);
+
+	miscProgSrc->AddProgress(0.9);
 
   // Store the IO hints inside of the image - in case it ever gets added
   // to a project
@@ -1928,7 +1950,7 @@ void IRISApplication
 ::AssignNicknameFromDicomMetadata(ImageWrapperBase *layer)
 {
   const std::string tag = "0008|103e";
-  MetaDataAccess mda(layer->GetImageBase());
+  auto mda = layer->GetMetaDataAccess();
   if(mda.HasKey(tag))
     layer->SetCustomNickname(mda.GetValueAsString(tag));
 }
@@ -1936,7 +1958,7 @@ void IRISApplication
 void IRISApplication
 ::LoadAnotherDicomSeriesViaDelegate(unsigned long reference_layer_id,
                                     const char *series_id,
-                                    AbstractLoadImageDelegate *del,
+                                    AbstractOpenImageDelegate *del,
                                     IRISWarningList &wl)
 {
   // We will use the main image's IO hints to create the IO hints for the
@@ -1954,7 +1976,7 @@ void IRISApplication
 
     // Use the current filename of the main image
     ImageWrapperBase *layer =
-        this->LoadImageViaDelegate(ref->GetFileName(), del, wl, &io_hints);
+        this->OpenImageViaDelegate(ref->GetFileName(), del, wl, &io_hints);
 
     // Assign the series ID of the loaded image as the nickname
     if(layer->GetCustomNickname().length() == 0)
@@ -1963,11 +1985,11 @@ void IRISApplication
 }
 
 void IRISApplication
-::LoadImage(const char *fname, LayerRole role, IRISWarningList &wl,
+::OpenImage(const char *fname, LayerRole role, IRISWarningList &wl,
             Registry *meta_data_reg, Registry *io_hints_reg, bool additive)
 {
   // Pointer to the delegate
-  SmartPtr<AbstractLoadImageDelegate> delegate;
+  SmartPtr<AbstractOpenImageDelegate> delegate;
 
   switch(role)
     {
@@ -1985,7 +2007,7 @@ void IRISApplication
       }
       break;
     default:
-      throw IRISException("LoadImage does not support role %d", role);
+      throw IRISException("OpenImage does not support role %d", role);
     }
 
   delegate->Initialize(this);
@@ -1993,7 +2015,7 @@ void IRISApplication
     delegate->SetMetaDataRegistry(meta_data_reg);
 
   // Load via delegate, providing the IO hints
-  this->LoadImageViaDelegate(fname, delegate, wl, io_hints_reg);
+  this->OpenImageViaDelegate(fname, delegate, wl, io_hints_reg);
 }
 
 SmartPtr<AbstractSaveImageDelegate>
@@ -2107,9 +2129,16 @@ void IRISApplication::SaveProjectToRegistry(Registry &preg, const std::string pr
       }
     }
 
+  // Save Mesh Layers
+  GetCurrentImageData()->GetMeshLayers()->SaveToRegistry(preg);
+
   // Save the annotations in the workspace
   Registry &ann_folder = preg.Folder("Annotations");
   this->m_IRISImageData->GetAnnotations()->SaveAnnotations(ann_folder);
+
+  // Save timepoint properties in the workspace
+  Registry &tp_folder = preg.Folder("TimePointProperties");
+  this->m_IRISImageData->GetTimePointProperties()->Save(tp_folder);
 
   // Recursively search and delete empty folders
   preg.CleanZeroSizeArrays();
@@ -2147,6 +2176,43 @@ void IRISApplication::SaveProject(const std::string &proj_file)
 
   // Store the project registry
   m_LastSavedProjectState = preg;
+}
+
+std::string
+IRISApplication
+::GetMovedFilePath(std::string &project_dir_orig, std::string &project_dir_crnt
+                   , std::string &original_file_path)
+{
+  std::string ret = original_file_path;
+
+  // Get the relative path of the layer wrt project
+  string relative_path;
+
+  // Test the simple thing: is the project location included in the file path
+  if(original_file_path.compare(0, project_dir_orig.length(), project_dir_orig) == 0)
+    {
+    // Get the balance of the path
+    relative_path = original_file_path.substr(project_dir_orig.length());
+
+    // Strip the leading slashes
+    itksys::SystemTools::ConvertToUnixSlashes(relative_path);
+    relative_path = relative_path.substr(relative_path.find_first_not_of('/'));
+    }
+  else
+    {
+    // Fallback: use relative path mechanism
+    relative_path = itksys::SystemTools::RelativePath(
+                      project_dir_orig.c_str(), original_file_path.c_str());
+    }
+
+  std::string moved_file_full = itksys::SystemTools::CollapseFullPath(
+        relative_path.c_str(), project_dir_crnt.c_str());
+
+  if(itksys::SystemTools::FileExists(moved_file_full.c_str(), true))
+    ret = moved_file_full;
+
+
+  return ret;
 }
 
 void IRISApplication::OpenProject(
@@ -2196,35 +2262,16 @@ void IRISApplication::OpenProject(
     // Get the filenames for the layer
     std::string layer_file_full = folder["AbsolutePath"][""];
 
+    std::string generated_file_full;
+
     // If the project has moved, try finding a relative location
     if(moved)
       {
-      // Get the relative path of the layer wrt project
-      string relative_path;
-
-      // Test the simple thing: is the project location included in the file path
-      if(layer_file_full.compare(0, project_save_dir.length(), project_save_dir) == 0)
-        {
-        // Get the balance of the path
-        relative_path = layer_file_full.substr(project_save_dir.length());
-
-        // Strip the leading slashes
-        itksys::SystemTools::ConvertToUnixSlashes(relative_path);
-        relative_path = relative_path.substr(relative_path.find_first_not_of('/'));
-        }
-      else
-        {
-        // Fallback: use relative path mechanism
-        relative_path = itksys::SystemTools::RelativePath(
-                          project_save_dir.c_str(), layer_file_full.c_str());
-        }
-
-      std::string moved_file_full = itksys::SystemTools::CollapseFullPath(
-            relative_path.c_str(), project_dir.c_str());
-
-      if(itksys::SystemTools::FileExists(moved_file_full.c_str(), true))
-        layer_file_full = moved_file_full;
+      layer_file_full = GetMovedFilePath(project_save_dir, project_dir, layer_file_full);
       }
+
+    if (!itksys::SystemTools::FileExists(layer_file_full.c_str()))
+      throw IRISException("The image file in Layer %d: \"%s\" does not exist",i ,layer_file_full.c_str());
 
     // Load the IO hints for the image from the project - but only if this
     // folder is actually present (otherwise some projects from before 2016
@@ -2239,7 +2286,7 @@ void IRISApplication::OpenProject(
       load_additive = true;
 
     // Load the image and its metadata
-    LoadImage(layer_file_full.c_str(), role, warn, &folder, io_hints, load_additive);
+    OpenImage(layer_file_full.c_str(), role, warn, &folder, io_hints, load_additive);
 
     // Check if the main has been loaded
     if(role == MAIN_ROLE)
@@ -2255,6 +2302,10 @@ void IRISApplication::OpenProject(
   // If main has not been loaded, throw an exception
   if(!main_loaded)
     throw IRISException("Empty or invalid project (main image not found in the project file).");
+
+  // Load Mesh Layers
+  GetCurrentImageData()->GetMeshLayers()->
+      LoadFromRegistry(preg, project_save_dir, project_dir);
 
   // Set the selected segmentation layer to be the first one
   m_GlobalState->SetSelectedSegmentationLayerId(
@@ -2272,6 +2323,13 @@ void IRISApplication::OpenProject(
     {
     Registry &ann_folder = preg.Folder("Annotations");
     m_IRISImageData->GetAnnotations()->LoadAnnotations(ann_folder);
+    }
+
+  // Load timepoint properties
+  if(preg.HasFolder("TimePointProperties"))
+    {
+    Registry &tpp_folder = preg.Folder("TimePointProperties");
+    m_IRISImageData->GetTimePointProperties()->Load(tpp_folder);
     }
 
   // Simulate saving the project into a registy that will be cached. This
@@ -2354,9 +2412,12 @@ bool IRISApplication::IsMainImageLoaded() const
   return this->GetCurrentImageData()->IsMainLoaded();
 }
 
-
-
-
+ImageWrapperBase *IRISApplication::GetMainImage() const
+{
+  if(this->IsMainImageLoaded())
+    return this->GetCurrentImageData()->GetMain();
+  else return nullptr;
+}
 
 /*
 void
@@ -2403,7 +2464,7 @@ IRISApplication
   assert(m_CurrentImageData->IsMainLoaded());
 
   // Perform reorientation in the current image data
-  m_CurrentImageData->SetDirectionMatrix(inDirection);
+  m_CurrentImageData->SetDirectionMatrix(inDirection.as_matrix());
 
   /*
   // Compute a new coordinate transform object

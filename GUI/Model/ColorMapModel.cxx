@@ -2,13 +2,12 @@
 #include "LayerAssociation.txx"
 #include "NumericPropertyToggleAdaptor.h"
 #include "ColorMapPresetManager.h"
-
+#include "ImageWrapperBase.h"
+#include "SegmentationMeshWrapper.h"
 #include <algorithm>
 
 // This compiles the LayerAssociation for the color map
-template class LayerAssociation<ColorMapLayerProperties,
-                                ImageWrapperBase,
-                                ColorMapModelBase::PropertiesFactory>;
+template class LayerAssociation<ColorMapLayerProperties,WrapperBase,ColorMapModelBase::PropertiesFactory>;
 
 ColorMapModel::ColorMapModel()
 {
@@ -54,7 +53,7 @@ ColorMapModel::ColorMapModel()
   Rebroadcast(this, ModelUpdateEvent(), StateMachineChangeEvent());
 }
 
-ColorMap* ColorMapModel::GetColorMap(ImageWrapperBase *layer)
+ColorMap* ColorMapModel::GetColorMap(WrapperBase *layer)
 {
   // Get the display mapping cast to a type that supports colormap
   return layer->GetDisplayMapping()->GetColorMap();
@@ -63,7 +62,7 @@ ColorMap* ColorMapModel::GetColorMap(ImageWrapperBase *layer)
 
 ColorMap* ColorMapModel::GetColorMap()
 {
-  return this->GetColorMap(this->GetLayer());
+  return this->GetLayer() ? this->GetColorMap(this->GetLayer()) : nullptr;
 }
 
 bool
@@ -118,7 +117,7 @@ ColorMapModel
 }
 
 
-void ColorMapModel::RegisterWithLayer(ImageWrapperBase *layer)
+void ColorMapModel::RegisterWithLayer(WrapperBase *layer)
 {
   // Register for the model events
   ColorMap *cm = this->GetColorMap(layer);
@@ -133,7 +132,7 @@ void ColorMapModel::RegisterWithLayer(ImageWrapperBase *layer)
     p.SetSelectedPreset(m_PresetManager->QueryPreset(cm));
 }
 
-void ColorMapModel::UnRegisterFromLayer(ImageWrapperBase *layer, bool being_deleted)
+void ColorMapModel::UnRegisterFromLayer(WrapperBase *layer, bool being_deleted)
 {
   if(!being_deleted)
     {
@@ -153,6 +152,10 @@ bool ColorMapModel::ProcessMousePressEvent(const Vector3d &x)
 
   // Reference to the color map
   ColorMap *cm = this->GetColorMap();
+
+	// For some layer such as segmentation image and mesh, cm can be nullptr
+	if (!cm)
+		return false;
 
   // Check if the press occurs near a control point
   for(size_t i = 0; i < cm->GetNumberOfCMPoints(); i++)
@@ -196,6 +199,11 @@ bool ColorMapModel::ProcessMouseDragEvent(const Vector3d &x)
 {
   // Reference to the color map
   ColorMap *cm = this->GetColorMap();
+
+	// For some layer such as segmentation image and mesh, cm can be nullptr
+	if (!cm)
+		return false;
+
   ColorMapLayerProperties &p  = this->GetProperties();
   int isel = p.GetSelectedControlIndex();
   Side side = p.GetSelectedControlSide();
@@ -422,6 +430,10 @@ ColorMapModel
 {
   // All flags are false if no layer is loaded
   if(this->GetLayer() == NULL || this->GetColorMap() == NULL)
+    return false;
+
+  // Segmentation Mesh don't need color map
+  if(dynamic_cast<SegmentationMeshWrapper*>(this->GetLayer()) != NULL)
     return false;
 
   // Otherwise get the properties

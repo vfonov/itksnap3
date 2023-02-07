@@ -29,7 +29,6 @@
 
 #include <SNAPCommon.h>
 #include <ImageCoordinateTransform.h>
-#include <OpenGLSliceTexture.h>
 #include <SNAPEvents.h>
 #include "AbstractModel.h"
 #include "ImageWrapper.h"
@@ -41,6 +40,7 @@ class GlobalUIModel;
 class IRISApplication;
 class GenericImageData;
 class GenericSliceModel;
+class DeformationGridModel;
 
 // An event fired when the geometry of the slice view changes
 itkEventMacro(SliceModelImageDimensionsChangeEvent, IRISEvent)
@@ -175,6 +175,11 @@ public:
   Vector2d MapSliceToWindow(const Vector3d &xSlice);
 
   /**
+   * Get the corners of the slide in window coordinates
+   */
+  std::pair<Vector2d, Vector2d> GetSliceCornersInWindowCoordinates() const;
+
+  /**
    * Map a point in slice coordinates to a point in PHYISCAL window coordinates
    */
   Vector2d MapSliceToPhysicalWindow(const Vector3d &xSlice);
@@ -292,6 +297,9 @@ public:
   /** Get the slice spacing in the display space orientation */
   irisGetMacro(SliceSize,Vector3i)
 
+  /** Get the corners of the rectangle in slice coordinates */
+  std::pair<Vector2d, Vector2d> GetSliceCorners() const;
+
   /** The id (slice direction) of this slice model */
   irisGetMacro(Id, int)
 
@@ -306,7 +314,7 @@ public:
    * view is in tiled mode, this reports the size of one of the tiles. When the
    * new is in main/thumbnail mode, this reports the size of the main view
    */
-  Vector2ui GetCanvasSize();
+  Vector2ui GetCanvasSize() const;
 
   /**
    * Whether rendering in tiled mode
@@ -381,6 +389,12 @@ public:
    */
   unsigned int MergeSliceSegmentation(
         itk::Image<unsigned char, 2> *drawing);
+
+  Vector3d ComputeGridPosition(const Vector3d &disp_pix,
+                               const itk::Index<2> &slice_index,
+                               ImageWrapperBase *vecimg);
+
+  DeformationGridModel *GetDeformationGridModel();
 
 
 protected:
@@ -473,7 +487,7 @@ protected:
   bool GetCurrentComponentInSelectedLayerValueAndDomain(unsigned int &value, NumericValueRange<unsigned int> *domain);
   void SetCurrentComponentInSelectedLayerValue(unsigned int value);
 
-
+  SmartPtr<DeformationGridModel> m_DeformationGridModel;
 
   /** Update the state of the viewport based on current layout settings */
   void UpdateViewportLayout();

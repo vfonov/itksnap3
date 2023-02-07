@@ -9,12 +9,14 @@ enum UIState {
   UIF_IRIS_MODE,                 // Not in snake mode (or other future such mode)
   UIF_IRIS_WITH_BASEIMG_LOADED,  // i.e., system in main interaction mode
   UIF_IRIS_WITH_OVERLAY_LOADED,  // i.e., system in main interaction mode
+  UIF_IS_4D,
   UIF_ROI_VALID,
   UIF_LINKED_ZOOM,
   UIF_UNDO_POSSIBLE,
   UIF_REDO_POSSIBLE,
   UIF_UNSAVED_CHANGES,
   UIF_MESH_SAVEABLE,
+  UIF_MESH_TP_LOADABLE,
   UIF_SNAKE_MODE,
   UIF_LEVEL_SET_ACTIVE,
   UIF_MULTIPLE_BASE_LAYERS,      // i.e., more than one non-sticky layer

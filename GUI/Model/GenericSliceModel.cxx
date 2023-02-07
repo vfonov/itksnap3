@@ -31,6 +31,7 @@
 #include <GenericImageData.h>
 #include <SNAPAppearanceSettings.h>
 #include <DisplayLayoutModel.h>
+#include "DeformationGridModel.h"
 
 #include <itkImage.h>
 #include <itkImageRegionIteratorWithIndex.h>
@@ -238,11 +239,11 @@ GenericSliceModel
 
   // Store the transforms between the display and image spaces
   m_ImageToDisplayTransform->SetTransform(
-        imageData->GetImageGeometry().GetImageToDisplayTransform(m_Id));
+        imageData->GetImageGeometry()->GetImageToDisplayTransform(m_Id));
   m_DisplayToImageTransform->SetTransform(
-    imageData->GetImageGeometry().GetDisplayToImageTransform(m_Id));
+    imageData->GetImageGeometry()->GetDisplayToImageTransform(m_Id));
 
-  imageData->GetImageGeometry().GetAnatomyToDisplayTransform(m_Id)->
+  imageData->GetImageGeometry()->GetAnatomyToDisplayTransform(m_Id)->
       ComputeInverse(m_DisplayToAnatomyTransform);
 
   // Get the volume extents & voxel scale factors
@@ -344,6 +345,21 @@ Vector2d GenericSliceModel::MapSliceToWindow(const Vector3d &xSlice)
 
   // That's it, the projection matrix is set up in the scaled-slice coordinates
   return uvWindow;
+}
+
+std::pair<Vector2d, Vector2d>
+GenericSliceModel::GetSliceCornersInWindowCoordinates() const
+{
+  std::pair<Vector2d, Vector2d> corners;
+
+  Vector2d uv0(0, 0);
+  Vector2d uv1(m_SliceSize[0] * m_SliceSpacing[0], m_SliceSize[1] * m_SliceSpacing[1]);
+
+  Vector2ui size = this->GetCanvasSize();
+  Vector2d ctr(0.5 * size[0], 0.5 * size[1]);
+  corners.first = m_ViewZoom * (uv0 - m_ViewPosition) + ctr;
+  corners.second = m_ViewZoom * (uv1 - m_ViewPosition) + ctr;
+  return corners;
 }
 
 Vector3d GenericSliceModel::MapWindowToSlice(const Vector2d &uvWindow)
@@ -605,6 +621,13 @@ void GenericSliceModel::SetViewPosition(Vector2d pos)
     }
 }
 
+std::pair<Vector2d, Vector2d> GenericSliceModel::GetSliceCorners() const
+{
+  Vector2d c0(0.0, 0.0);
+  Vector2d c1(m_SliceSize[0] * m_SliceSpacing[0], m_SliceSize[1] * m_SliceSpacing[1]);
+  return std::make_pair(c0, c1);
+}
+
 
 /*
 GenericSliceWindow::EventHandler
@@ -671,7 +694,7 @@ Vector2ui GenericSliceModel::GetSizeInLogicalPixels()
   return size;
 }
 
-Vector2ui GenericSliceModel::GetCanvasSize()
+Vector2ui GenericSliceModel::GetCanvasSize() const
 {
   assert(m_ViewportLayout.vpList.size() > 0);
   assert(!m_ViewportLayout.vpList.front().isThumbnail);
@@ -1038,4 +1061,86 @@ ImageWrapperBase *GenericSliceModel::GetLayerForNthTile(int row, int col)
     }
 
   return NULL;
+}
+
+Vector3d GenericSliceModel::ComputeGridPosition(
+    const Vector3d &disp_pix,
+    const itk::Index<2> &slice_index,
+    ImageWrapperBase *vecimg)
+{
+
+  // The pixel must be mapped to native
+  Vector3d disp;
+  disp[0] = vecimg->GetNativeIntensityMapping()->MapInternalToNative(disp_pix[0]);
+  disp[1] = vecimg->GetNativeIntensityMapping()->MapInternalToNative(disp_pix[1]);
+  disp[2] = vecimg->GetNativeIntensityMapping()->MapInternalToNative(disp_pix[2]);
+
+  // This is the physical coordinate of the current pixel - in LPS
+  Vector3d xPhys;
+  if(vecimg->IsSlicingOrthogonal())
+    {
+    // The pixel gives the displacement in LPS coordinates (by ANTS/Greedy convention)
+    // We need to map it back into the slice domain. First, we need to know the 3D index
+    // of the current pixel in the image space
+    Vector3d xSlice;
+    xSlice[0] = slice_index[0] + 0.5;
+    xSlice[1] = slice_index[1] + 0.5;
+    xSlice[2] = this->GetSliceIndex();
+
+    // For orthogonal slicing, the input coordinates are in units of image voxels
+    xPhys = this->MapSliceToImagePhysical(xSlice);
+    }
+  else
+    {
+    // Otherwise, the slice coordinates are relative to the rendered slice
+    GenericImageData *gid = this->GetImageData();
+    GenericImageData::ImageBaseType *dispimg =
+        gid->GetDisplayViewportGeometry(this->GetId());
+
+    // Use that image to transform coordinates
+    itk::Point<double, 3> pPhys;
+    itk::Index<3> index;
+    index[0] = slice_index[0]; index[1] = slice_index[1]; index[2] = 0;
+    dispimg->TransformIndexToPhysicalPoint(index, pPhys);
+    xPhys = pPhys;
+    }
+
+  // Add displacement and map back to slice space
+  itk::ContinuousIndex<double, 3> cix;
+  itk::Point<double, 3> pt = to_itkPoint(xPhys + disp);
+
+  this->GetDriver()->GetCurrentImageData()->GetMain()->GetImageBase()
+      ->TransformPhysicalPointToContinuousIndex(pt, cix);
+
+  // The displaced location in slice coordinates
+  Vector3d disp_slice = this->MapImageToSlice(Vector3d(cix));
+
+  // What we return also depends on whether slicing is ortho or not. For ortho
+  // slicing, the renderer is configured in the "Slice" coordinate system (1 unit =
+  // 1 image voxel) while for oblique slicing, the renderer uses the window coordinate
+  // system (1 unit = 1 screen pixel). Whatever we return needs to be in those units.
+  if(vecimg->IsSlicingOrthogonal())
+    {
+    return disp_slice;
+    }
+  else
+    {
+    Vector3d win3d;
+    Vector2d win2d = this->MapSliceToWindow(disp_slice);
+    win3d[0] = win2d[0]; win3d[1] = win2d[1]; win3d[2] = disp_slice[2];
+    return win3d;
+    }
+}
+
+DeformationGridModel *
+GenericSliceModel
+::GetDeformationGridModel()
+{
+  if (!m_DeformationGridModel)
+    {
+    m_DeformationGridModel = DeformationGridModel::New();
+    m_DeformationGridModel->SetParent(this);
+    }
+
+  return m_DeformationGridModel;
 }

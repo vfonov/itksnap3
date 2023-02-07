@@ -60,6 +60,7 @@
 #include "NumericPropertyToggleAdaptor.h"
 #include "HistoryManager.h"
 #include "MeshExportModel.h"
+#include "MeshImportModel.h"
 #include "GlobalPreferencesModel.h"
 #include "MeshOptions.h"
 #include "DefaultBehaviorSettings.h"
@@ -68,9 +69,12 @@
 #include "IntensityCurveInterface.h"
 #include "ColorLabelQuickListModel.h"
 #include "InterpolateLabelModel.h"
+#include "SmoothLabelsModel.h"
+#include "VoxelChangeReportModel.h"
 #include "RegistrationModel.h"
 #include "InteractiveRegistrationModel.h"
 #include "DistributedSegmentationModel.h"
+#include "ImageMeshLayers.h"
 
 #include <itksys/SystemTools.hxx>
 
@@ -203,6 +207,10 @@ GlobalUIModel::GlobalUIModel()
   m_MeshExportModel = MeshExportModel::New();
   m_MeshExportModel->SetParentModel(this);
 
+  // Mesh import model
+  m_MeshImportModel = MeshImportModel::New();
+  m_MeshImportModel->SetParentModel(this);
+
   // Global prefs model
   m_GlobalPreferencesModel = GlobalPreferencesModel::New();
   m_GlobalPreferencesModel->SetParentModel(this);
@@ -214,6 +222,14 @@ GlobalUIModel::GlobalUIModel()
   // Interpolation dialog
   m_InterpolateLabelModel = InterpolateLabelModel::New();
   m_InterpolateLabelModel->SetParentModel(this);
+
+  // issue #24: Label smoothing feature
+  m_SmoothLabelsModel = SmoothLabelsModel::New();
+  m_SmoothLabelsModel->SetParentModel(this);
+
+  // issue #24: Voxel Change Report
+  m_VoxelChangeReportModel = VoxelChangeReportModel::New();
+  m_VoxelChangeReportModel->SetParentModel(this);
 
   // Set up the cursor position model
   m_CursorPositionModel = wrapGetterSetterPairAsProperty(
@@ -228,6 +244,26 @@ GlobalUIModel::GlobalUIModel()
         this, CursorUpdateEvent(), ValueChangedEvent());
   m_CursorPositionModel->Rebroadcast(
         m_Driver, MainImageDimensionsChangeEvent(), DomainChangedEvent());
+
+  // Set up the time point model
+  m_CursorTimePointModel = wrapGetterSetterPairAsProperty(
+                             this,
+                             &Self::GetCursorTimePointValueAndRange,
+                             &Self::SetCursorTimePoint);
+
+  // Same rebroadcast logic as above
+  m_CursorTimePointModel->Rebroadcast(
+        this, CursorUpdateEvent(), ValueChangedEvent());
+  m_CursorTimePointModel->Rebroadcast(
+        m_Driver, MainImageDimensionsChangeEvent(), DomainChangedEvent());
+
+  // Whether there is 4D model
+  m_WorkspaceIs4DModel = wrapGetterSetterPairAsProperty(
+                           this,
+                           &Self::GetWorkspaceIs4DValue);
+
+  m_WorkspaceIs4DModel->Rebroadcast(
+        m_Driver, MainImageDimensionsChangeEvent(), ValueChangedEvent());
 
   // ROI size and index models
   m_SnakeROIIndexModel = wrapGetterSetterPairAsProperty(
@@ -304,6 +340,9 @@ GlobalUIModel::GlobalUIModel()
   Rebroadcast(m_Driver->GetGlobalState()->GetSegmentationROISettingsModel(),
               ValueChangedEvent(), SegmentationROIChangedEvent());
 
+  // Active Layer Id changed event
+  Rebroadcast(m_Driver, ActiveLayerChangeEvent(), ActiveLayerChangeEvent());
+
   // The initial reporter delegate is NULL
   m_ProgressReporterDelegate = NULL;
 
@@ -349,6 +388,22 @@ bool GlobalUIModel::CheckState(UIState state)
       break;
     case UIF_MESH_SAVEABLE:
       break;
+    case UIF_MESH_TP_LOADABLE:
+      {
+      bool ret = false;
+      auto mesh_layers = m_Driver->GetCurrentImageData()->GetMeshLayers();
+      auto active_mesh_layer = mesh_layers->GetLayer(mesh_layers->GetActiveLayerId());
+      if (active_mesh_layer)
+        {
+        ret = active_mesh_layer->IsExternalLoadable();
+        }
+
+      return ret;
+      }
+    case UIF_IS_4D:
+      {
+      return m_Driver->GetNumberOfTimePoints() > 1;
+      }
     case UIF_OVERLAY_LOADED:
       return m_Driver->GetCurrentImageData()->AreOverlaysLoaded();
     case UIF_SNAKE_MODE:
@@ -405,7 +460,10 @@ void GlobalUIModel::ToggleOverlayVisibility()
   GenericImageData *id = m_Driver->GetCurrentImageData();
 
   // Remember what layer is current in the general properties model
-  ImageWrapperBase *curr_layer = m_LayerGeneralPropertiesModel->GetLayer();
+  ImageWrapperBase *curr_layer = dynamic_cast<ImageWrapperBase*>(m_LayerGeneralPropertiesModel->GetLayer());
+
+  if (!curr_layer)
+    return;
 
   // Apply the toggle for all overlays
   for(LayerIterator it = id->GetLayers(MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE); !it.IsAtEnd(); ++it)
@@ -430,7 +488,10 @@ void GlobalUIModel::AdjustOverlayOpacity(int delta)
   GenericImageData *id = m_Driver->GetCurrentImageData();
 
   // Remember what layer is current in the general properties model
-  ImageWrapperBase *curr_layer = m_LayerGeneralPropertiesModel->GetLayer();
+  ImageWrapperBase *curr_layer = dynamic_cast<ImageWrapperBase*>(m_LayerGeneralPropertiesModel->GetLayer());
+
+  if (!curr_layer)
+    return;
 
   // Apply the toggle for all overlays
   for(LayerIterator it = id->GetLayers(MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE); !it.IsAtEnd(); ++it)
@@ -508,7 +569,7 @@ void GlobalUIModel::LoadUserPreferences()
 
   // Read the appearance settings
   m_AppearanceSettings->LoadFromRegistry(
-        si->Folder("UserInterface.Appearance"));
+        si->Folder("UserInterface.AppearanceVTK"));
 
   // Read the default behaviors
   dbs->ReadFromRegistry(
@@ -555,7 +616,7 @@ void GlobalUIModel::SaveUserPreferences()
 
   // Write the appearance settings
   m_AppearanceSettings->SaveToRegistry(
-        si->Folder("UserInterface.Appearance"));
+        si->Folder("UserInterface.AppearanceVTK"));
 
   // Write the default behaviors
   m_Driver->GetGlobalState()->GetDefaultBehaviorSettings()->WriteToRegistry(
@@ -602,6 +663,39 @@ bool GlobalUIModel::GetCursorPositionValueAndRange(
 void GlobalUIModel::SetCursorPosition(Vector3ui value)
 {
   m_Driver->SetCursorPosition(value - 1u);
+}
+
+bool GlobalUIModel::GetCursorTimePointValueAndRange(
+    unsigned int &value, NumericValueRange<unsigned int> *range)
+{
+  if(m_Driver->IsMainImageLoaded())
+    {
+    value = m_Driver->GetCursorTimePoint() + 1u;
+    if(range)
+      {
+      // We tie the number of time points allowed to the main image.
+      // TODO: in the future we may want to allow more flexibility
+      range->Set(1u, m_Driver->GetCurrentImageData()->GetMain()->GetNumberOfTimePoints(), 1u);
+      }
+    return true;
+    }
+
+  return false;
+}
+
+void GlobalUIModel::SetCursorTimePoint(unsigned int value)
+{
+  m_Driver->SetCursorTimePoint(value - 1u);
+}
+
+bool GlobalUIModel::GetWorkspaceIs4DValue(bool &value)
+{
+  if(m_Driver->IsMainImageLoaded())
+    {
+    value = m_Driver->GetCurrentImageData()->GetMain()->GetNumberOfTimePoints() > 1;
+    return true;
+    }
+  return false;
 }
 
 bool GlobalUIModel::GetSnakeROIIndexValueAndRange(
@@ -847,7 +941,7 @@ std::string GlobalUIModel::GenerateScreenshotFilename()
 }
 
 SmartPtr<ImageIOWizardModel>
-GlobalUIModel::CreateIOWizardModelForSave(ImageWrapperBase *layer, LayerRole role)
+GlobalUIModel::CreateIOWizardModelForSave(ImageWrapperBase *layer, LayerRole role, bool crntTPOnly)
 {
   // Create save delegate for this layer
   SmartPtr<AbstractSaveImageDelegate> delegate =
@@ -855,7 +949,7 @@ GlobalUIModel::CreateIOWizardModelForSave(ImageWrapperBase *layer, LayerRole rol
 
   // Create a model for IO
   SmartPtr<ImageIOWizardModel> modelIO = ImageIOWizardModel::New();
-  modelIO->InitializeForSave(this, delegate, delegate->GetCategory().c_str());
+  modelIO->InitializeForSave(this, delegate, delegate->GetCategory().c_str(), crntTPOnly);
 
   return modelIO;
 }
@@ -955,4 +1049,23 @@ GlobalUIModel
     itk::ProcessObject *po = static_cast<itk::ProcessObject *>(source);
     m_ProgressReporterDelegate->SetProgressValue(po->GetProgress());
     }
+}
+
+int
+GlobalUIModel
+::GetDefault4DReplayInterval() const
+{
+  // Default interval set to 50,
+  // because common scanning machine setting is 20Hz
+  int ret = 50;
+  if (m_Driver && m_Driver->GetNumberOfTimePoints() > 1)
+    {
+    auto spc = m_Driver->GetMainImage()->GetImage4DBase()->GetSpacing();
+    // No screen can display 500Hz+ frame rate.
+    // Use default for any frame time < 2ms
+    if (spc[3] >= 2)
+      ret = floor(spc[3]);
+    }
+
+  return ret;
 }

@@ -5,7 +5,7 @@
 #include "PropertyModel.h"
 #include "vtkSmartPointer.h"
 #include "SNAPEvents.h"
-#include "itkMutexLock.h"
+#include <mutex>
 
 class GlobalUIModel;
 class IRISApplication;
@@ -13,6 +13,7 @@ class MeshManager;
 class Generic3DRenderer;
 class vtkPolyData;
 class MeshExportSettings;
+class ImageMeshLayers;
 
 namespace itk
 {
@@ -62,8 +63,11 @@ public:
   // TODO: replace this with an update in a background thread
   irisSimplePropertyAccessMacro(ContinuousUpdate, bool)
 
+  // A flag indicating the color bar should be displayed
+  irisSimplePropertyAccessMacro(DisplayColorBar, bool)
+
   // Tell the model to update the segmentation mesh
-  void UpdateSegmentationMesh(itk::Command *callback);
+  void UpdateSegmentationMesh(itk::Command *progressCmd);
 
   // Reentrant function to check if mesh is being constructed in another thread
   bool IsMeshUpdating();
@@ -102,6 +106,15 @@ public:
   // Get the renderer
   irisGetMacro(Renderer, Generic3DRenderer *)
 
+  // Get the driver
+  irisGetMacro(Driver, IRISApplication *)
+
+  // Get mesh layers
+  ImageMeshLayers *GetMeshLayers();
+
+  /** Set/Get selected mesh layer id */
+  irisSimplePropertyAccessMacro(SelectedMeshLayerId, unsigned long)
+
   // Get the transform from image space to world coordinates
   Mat4d &GetWorldMatrix();
 
@@ -134,6 +147,9 @@ protected:
   // Find the labeled voxel under the cursor
   bool IntersectSegmentation(int vx, int vy, Vector3i &hit);
 
+  // Find the labeled voxels under the cursor within a radius
+  bool IntersectSegmentation(int vx, int vy, double v_radius, int n_samples, std::set<Vector3i> &hits);
+
   // Parent (where the global UI state is stored)
   GlobalUIModel *m_ParentUI;
 
@@ -159,15 +175,20 @@ protected:
   // Continuous update model
   SmartPtr<ConcreteSimpleBooleanProperty> m_ContinuousUpdateModel;
 
+  // Display Color Bar model
+  SmartPtr<ConcreteSimpleBooleanProperty> m_DisplayColorBarModel;
+
   // Is the mesh updating
   bool m_MeshUpdating;
+
+  // Selected Mesh Layer ID
+  SmartPtr<ConcreteSimpleULongProperty> m_SelectedMeshLayerIdModel;
 
   // Time of the last mesh clear operation
   unsigned long m_ClearTime;
 
-  // A mutex lock to allow background processing of mesh updates
-  itk::SimpleFastMutexLock m_MutexLock;
-
+  // A mutex to allow background processing of mesh updates
+  std::mutex m_Mutex;
 };
 
 #endif // GENERIC3DMODEL_H

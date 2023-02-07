@@ -51,12 +51,16 @@
 #include "SimpleFileDialogWithHistory.h"
 #include "StatisticsDialog.h"
 #include "MeshExportWizard.h"
+#include "MeshImportWizard.h"
+#include "MeshImportModel.h"
 #include "ImageWrapperBase.h"
 #include "IRISImageData.h"
 #include "AboutDialog.h"
 #include "HistoryManager.h"
 #include "DefaultBehaviorSettings.h"
 #include "SynchronizationModel.h"
+#include "LayoutReminderDialog.h"
+#include "AllPurposeProgressAccumulator.h"
 
 #include "QtCursorOverride.h"
 #include "QtWarningDialog.h"
@@ -70,6 +74,7 @@
 #include <PreferencesDialog.h>
 #include "SaveModifiedLayersDialog.h"
 #include <InterpolateLabelsDialog.h>
+#include <SmoothLabelsDialog.h>
 #include "RegistrationDialog.h"
 #include "DistributedSegmentationDialog.h"
 
@@ -85,9 +90,8 @@
 #include <QDesktopServices>
 #include <SNAPQtCommon.h>
 #include <QMimeData>
-#include <QDesktopWidget>
 #include <QShortcut>
-
+#include <QScreen>
 #include <QTextStream>
 
 QString read_tooltip_qt(const QString &filename)
@@ -213,6 +217,10 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   m_InterpolateLabelsDialog = new InterpolateLabelsDialog(this);
   m_InterpolateLabelsDialog->setModal(false);
 
+  // issue #24: adding label smoothing feature
+  m_SmoothLabelsDialog = new SmoothLabelsDialog(this);
+  m_SmoothLabelsDialog->setModal(false);
+
   m_DSSDialog = new DistributedSegmentationDialog(this);
   m_DSSDialog->setModal(false);
 
@@ -329,6 +337,11 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   // Start the timer (it doesn't cost much...)
   m_AnimateTimer->start();
 
+  // Set up the 4D replay timer
+  m_4DReplayTimer = new QTimer(this);
+  m_4DReplayTimer->setInterval(m_Crnt4DReplayInteval);
+  connect(m_4DReplayTimer, SIGNAL(timeout()), SLOT(on4DReplayTimeout()));
+
   // Create keyboard shortcuts for opacity (because there seems to be a bug/feature on MacOS
   // where keyboard shortcuts require the Fn-key to be pressed in QMenu
   this->HookupShortcutToAction(QKeySequence("s"), ui->actionSegmentationToggle);
@@ -338,7 +351,7 @@ MainImageWindow::MainImageWindow(QWidget *parent) :
   this->HookupShortcutToAction(QKeySequence("w"), ui->actionOverlayVisibilityToggleAll);
   this->HookupShortcutToAction(QKeySequence("e"), ui->actionOverlayVisibilityIncreaseAll);
   this->HookupShortcutToAction(QKeySequence(Qt::Key_X), ui->actionToggle_All_Annotations);
-  this->HookupShortcutToAction(QKeySequence(Qt::SHIFT + Qt::Key_X), ui->actionToggle_Crosshair);
+  this->HookupShortcutToAction(QKeySequence(Qt::SHIFT | Qt::Key_X), ui->actionToggle_Crosshair);
   this->HookupShortcutToAction(QKeySequence("<"), ui->actionForegroundLabelPrev);
   this->HookupShortcutToAction(QKeySequence(">"), ui->actionForegroundLabelNext);
   this->HookupSecondaryShortcutToAction(QKeySequence(","), ui->actionForegroundLabelPrev);
@@ -478,6 +491,7 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   m_InterpolateLabelsDialog->SetModel(model->GetInterpolateLabelModel());
   m_RegistrationDialog->SetModel(model->GetRegistrationModel());
   m_DSSDialog->SetModel(model->GetDistributedSegmentationModel());
+  m_SmoothLabelsDialog->SetModel(model->GetSmoothLabelsModel()); // issue #24
 
   // Initialize the docked panels
   m_ControlPanel->SetModel(model);
@@ -535,6 +549,16 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
         ValueChangedEvent(), this, SLOT(onModelUpdate(EventBucket)));
 
 
+  // Listen to 4D Image Time Point Replay event
+  LatentITKEventNotifier::connect(
+        model->GetDriver()->GetGlobalState()->Get4DReplayModel(),
+        ValueChangedEvent(), this, SLOT(onModelUpdate(EventBucket)));
+
+  LatentITKEventNotifier::connect(
+        model->GetDriver()->GetGlobalState()->Get4DReplayIntervalModel(),
+        ValueChangedEvent(), this, SLOT(onModelUpdate(EventBucket)));
+
+
   // Couple the visibility of each view panel to the correponding property
   // model in DisplayLayoutModel
   DisplayLayoutModel *layoutModel = m_Model->GetDisplayLayoutModel();
@@ -547,6 +571,8 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   // Set up activations - File menu
   activateOnFlag(ui->actionOpenMain, m_Model, UIF_IRIS_MODE);
   activateOnFlag(ui->menuRecent_Images, m_Model, UIF_IRIS_MODE);
+  activateOnFlag(ui->actionAddMesh, m_Model, UIF_BASEIMG_LOADED);
+  activateOnFlag(ui->actionAddMeshSeries, m_Model, UIF_IS_4D);
   activateOnFlag(ui->actionSaveMain, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionSaveSpeed, m_Model, UIF_SNAKE_MODE);
   activateOnFlag(ui->actionSaveLevelSet, m_Model, UIF_LEVEL_SET_ACTIVE);
@@ -567,6 +593,7 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   activateOnFlag(ui->actionActivatePreviousLayer, m_Model, UIF_MULTIPLE_BASE_LAYERS);
   activateOnFlag(ui->actionActivateNextSegmentationLayer, m_Model, UIF_MULTIPLE_SEGMENTATION_LAYERS);
   activateOnFlag(ui->actionActivatePreviousSegmentationLayer, m_Model, UIF_MULTIPLE_SEGMENTATION_LAYERS);
+  activateOnFlag(ui->actionToggle_4D_Replay, m_Model, UIF_IS_4D);
 
   // Add actions that are not on the menu
   activateOnFlag(ui->actionZoomToFitInAllViews, m_Model, UIF_BASEIMG_LOADED);
@@ -583,6 +610,8 @@ void MainImageWindow::Initialize(GlobalUIModel *model)
   activateOnFlag(ui->menuAddSegmentation, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionSaveSegmentation, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionSaveSegmentationAs, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
+  activateOnAllFlags(ui->actionSaveTimePointSegmentation, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED, UIF_IS_4D,
+                     QtWidgetActivator::HideInactive);
   activateOnFlag(ui->actionSave_as_Mesh, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionLoadLabels, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
   activateOnFlag(ui->actionSaveLabels, m_Model, UIF_IRIS_WITH_BASEIMG_LOADED);
@@ -675,6 +704,8 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
       b.HasEvent(ValueChangedEvent(), m_Model->GetGlobalState()->GetSelectedSegmentationLayerIdModel());
   bool display_layout_changed = b.HasEvent(DisplayLayoutModel::DisplayLayoutChangeEvent());
   bool layer_layout_changed = b.HasEvent(DisplayLayoutModel::LayerLayoutChangeEvent());
+  bool replay_4d_changed = b.HasEvent(ValueChangedEvent(), m_Model->GetGlobalState()->Get4DReplayModel());
+  bool replay_4d_interval_changed = b.HasEvent(ValueChangedEvent(),  m_Model->GetGlobalState()->Get4DReplayIntervalModel());
 
   if(main_changed)
     {
@@ -683,6 +714,14 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
     // TODO: figure out if we can avoid flashing altogether
     // QTimer::singleShot(200, this, SLOT(UpdateMainLayout()));
     this->UpdateMainLayout();
+
+    // If 4D main is loaded, get a new default interval from the model
+    if(m_Model->GetDriver()->GetNumberOfTimePoints() > 1)
+      {
+      m_Model->GetGlobalState()->Set4DReplayInterval(
+            m_Model->GetDefault4DReplayInterval());
+      }
+
     }
 
   if(layers_changed || main_history_changed)
@@ -709,6 +748,9 @@ void MainImageWindow::onModelUpdate(const EventBucket &b)
   if(layers_changed || layers_meta_changed || proj_file_changed || selected_seg_layer_changed)
     this->UpdateWindowTitle();
 
+  if(replay_4d_changed || replay_4d_interval_changed)
+    this->Update4DReplay();
+
 
 }
 
@@ -723,7 +765,7 @@ void MainImageWindow::onActiveChanged()
 {
   if(this->isActiveWindow())
     {
-    ui->actionUnload_Last_Overlay->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_W));
+    ui->actionUnload_Last_Overlay->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W));
     ui->actionClose_Window->setVisible(false);
     }
   else
@@ -770,9 +812,6 @@ void MainImageWindow::UpdateCanvasDimensions()
     return;
     }
 
-  // Get the current desktop dimensions
-  QRect desktop = QApplication::desktop()->availableGeometry(this);
-
   // The desired window aspect ratio
   double windowAR = 1.0;
 
@@ -802,17 +841,21 @@ void MainImageWindow::UpdateCanvasDimensions()
   int mw_width = this->width() + (cw_width - ui->centralwidget->width());
 
   // Adjust the width to be within the desktop dimensions
+  auto desktop = this->screen()->availableGeometry();
   mw_width = std::min(desktop.width(), mw_width);
 
+  // Store the old width
+  int old_width = this->width();
+  this->resize(QSize(mw_width, this->height()));
+
   // Deterimine the left point
-  int left = std::max(0, this->pos().x() + this->width() / 2 - mw_width / 2);
+  int left = std::max(0, this->pos().x() + (old_width - this->width()) / 2);
 
   // Adjust the left point if necessary
-  if(left + mw_width > desktop.right())
-    left = std::max(0, desktop.right() - mw_width);
+  if(left + this->width() > desktop.right())
+    left = std::max(0, desktop.right() - this->width());
 
   // Now we want to position the window nicely.
-  this->resize(QSize(mw_width, this->height()));
   this->move(left, this->pos().y());
 }
 
@@ -945,7 +988,7 @@ void MainImageWindow::UpdateRecentMenu()
                          SLOT(LoadRecentActionTriggered()), true, Qt::CTRL);
 
   this->CreateRecentMenu(ui->menuRecent_Overlays, "AnatomicImage", false, 5,
-                         SLOT(LoadRecentOverlayActionTriggered()), true, Qt::CTRL +  Qt::SHIFT);
+                         SLOT(LoadRecentOverlayActionTriggered()), true, Qt::CTRL | Qt::SHIFT);
 
   this->CreateRecentMenu(ui->menuRecent_Segmentations, "LabelImage", false, 5,
                          SLOT(LoadRecentSegmentationActionTriggered()));
@@ -969,7 +1012,8 @@ void MainImageWindow::UpdateWindowTitle()
   if(gid && gid->IsMainLoaded())
     {
     mainfile = QFileInfo(from_utf8(gid->GetMain()->GetFileName())).fileName();
-    segfile = QFileInfo(from_utf8(m_Model->GetDriver()->GetSelectedSegmentationLayer()->GetFileName())).fileName();
+    if(m_Model->GetDriver()->GetSelectedSegmentationLayer())
+      segfile = QFileInfo(from_utf8(m_Model->GetDriver()->GetSelectedSegmentationLayer()->GetFileName())).fileName();
     }
 
   // If a project is loaded, we display the project title
@@ -1216,12 +1260,19 @@ void MainImageWindow::LoadDroppedFile(QString file)
       // If an image is already loaded, we show the dialog
       m_DropDialog->SetDroppedFilename(file);
       m_DropDialog->setModal(true);
+
+      // Check if the file can be loaded as mesh
+      QFileInfo fileinfo(file);
+      auto ext = fileinfo.completeSuffix();
+      auto fmt = GuidedMeshIO::GetFormatByExtension(ext.toStdString());
+      m_DropDialog->SetIncludeMeshOptions(GuidedMeshIO::can_read(fmt));
+
       RaiseDialog(m_DropDialog);
       }
     else
       {
       // Otherwise, load the main image directly
-      m_DropDialog->LoadMainImage(file);
+      m_DropDialog->InitialLoad(file);
       }
     }
 }
@@ -1320,6 +1371,15 @@ LayerInspectorDialog *MainImageWindow::GetLayerInspector()
 
 void MainImageWindow::LoadMainImage(const QString &file)
 {
+	// Show a progress dialog
+	using namespace imageiowiz;
+	ImageIOProgressDialog::ScopedPointer progress(new ImageIOProgressDialog(this));
+	progress->display();
+
+	SmartPtr<ImageReadingProgressAccumulator> irProgAccum =
+			ImageReadingProgressAccumulator::New();
+  irProgAccum->AddProgressReporterCommand(progress->createCommand());
+
   // Prompt for unsaved changes
   if(!SaveModifiedLayersDialog::PromptForUnsavedChanges(m_Model))
     return;
@@ -1332,10 +1392,12 @@ void MainImageWindow::LoadMainImage(const QString &file)
     IRISWarningList warnings;
     SmartPtr<LoadMainImageDelegate> del = LoadMainImageDelegate::New();
     del->Initialize(m_Model->GetDriver());
-    m_Model->GetDriver()->LoadImageViaDelegate(file.toUtf8().constData(), del, warnings);
+		m_Model->GetDriver()->OpenImageViaDelegate(file.toUtf8().constData(), del, warnings,
+																							 NULL, irProgAccum.GetPointer());
     }
   catch(exception &exc)
     {
+    progress->close();
     ReportNonLethalException(this, exc, "Image IO Error",
                              QString("Failed to load image %1").arg(file));
 
@@ -1356,6 +1418,15 @@ void MainImageWindow::LoadRecentOverlayActionTriggered()
   QAction *action = qobject_cast<QAction *>(sender());
   QString file = action->text();
 
+	// Show a progress dialog
+	using namespace imageiowiz;
+	ImageIOProgressDialog::ScopedPointer progress(new ImageIOProgressDialog(this));
+	progress->display();
+
+	SmartPtr<ImageReadingProgressAccumulator> irProgAccum =
+			ImageReadingProgressAccumulator::New();
+	irProgAccum->AddObserver(itk::ProgressEvent(), progress->createCommand());
+
   // Try loading the image
   try
     {
@@ -1364,10 +1435,12 @@ void MainImageWindow::LoadRecentOverlayActionTriggered()
     IRISWarningList warnings;
     SmartPtr<LoadOverlayImageDelegate> del = LoadOverlayImageDelegate::New();
     del->Initialize(m_Model->GetDriver());
-    m_Model->GetDriver()->LoadImageViaDelegate(file.toUtf8().constData(), del, warnings);
+		m_Model->GetDriver()->OpenImageViaDelegate(file.toUtf8().constData(), del, warnings,
+																							 NULL, irProgAccum);
     }
   catch(exception &exc)
     {
+    progress->close();
     ReportNonLethalException(this, exc, "Image IO Error",
                              QString("Failed to load overlay image %1").arg(file));
     }
@@ -1379,6 +1452,15 @@ void MainImageWindow::LoadRecentSegmentation(QString file, bool additive)
   if(!SaveModifiedLayersDialog::PromptForUnsavedSegmentationChanges(m_Model))
     return;
 
+	// Show a progress dialog
+	using namespace imageiowiz;
+	ImageIOProgressDialog::ScopedPointer progress(new ImageIOProgressDialog(this));
+	progress->display();
+
+	SmartPtr<ImageReadingProgressAccumulator> irProgAccum =
+			ImageReadingProgressAccumulator::New();
+	irProgAccum->AddObserver(itk::ProgressEvent(), progress->createCommand());
+
   // Try loading the image
   try
     {
@@ -1388,10 +1470,12 @@ void MainImageWindow::LoadRecentSegmentation(QString file, bool additive)
     SmartPtr<LoadSegmentationImageDelegate> del = LoadSegmentationImageDelegate::New();
     del->Initialize(m_Model->GetDriver());
     del->SetAdditiveMode(additive);
-    m_Model->GetDriver()->LoadImageViaDelegate(file.toUtf8().constData(), del, warnings);
+		m_Model->GetDriver()->OpenImageViaDelegate(file.toUtf8().constData(), del, warnings,
+																							 NULL, irProgAccum);
     }
   catch(exception &exc)
     {
+    progress->close();
     ReportNonLethalException(this, exc, "Image IO Error",
                              QString("Failed to load segmentation image %1").arg(file));
     }
@@ -1482,6 +1566,16 @@ void MainImageWindow::onAnimationTimeout()
 {
   if(m_Model)
     m_Model->AnimateLayerComponents();
+}
+
+void MainImageWindow::on4DReplayTimeout()
+{
+  if(m_Model && m_Model->GetDriver()->GetNumberOfTimePoints() > 1)
+    {
+    int crntTP = m_Model->GetDriver()->GetCursorTimePoint();
+    int nextTP = (crntTP + 1) % (m_Model->GetDriver()->GetNumberOfTimePoints());
+    m_Model->GetDriver()->SetCursorTimePoint(nextTP);
+    }
 }
 
 void MainImageWindow::LoadRecentProjectActionTriggered()
@@ -1606,6 +1700,29 @@ void MainImageWindow::on_actionAdd_Overlay_triggered()
   wiz.exec();
 }
 
+void MainImageWindow::on_actionAddMesh_triggered()
+{
+  // Get and Configure the model
+  auto model = m_Model->GetMeshImportModel();
+  model->SetMode(MeshImportModel::Mode::SINGLE);
+
+  // Show the Wizard Dialog
+  MeshImportWizard wiz(this);
+  wiz.SetModel(model);
+  wiz.exec();
+}
+
+void MainImageWindow::on_actionAddMeshSeries_triggered()
+{
+  auto model = m_Model->GetMeshImportModel();
+  model->SetMode(MeshImportModel::Mode::SERIES);
+
+  // Show the Wizard Dialog
+  MeshImportWizard wiz(this);
+  wiz.SetModel(model);
+  wiz.exec();
+}
+
 
 void MainImageWindow::ExportScreenshot(int panelIndex)
 {
@@ -1626,19 +1743,16 @@ void MainImageWindow::ExportScreenshot(int panelIndex)
     return;
 
   // What panel is this?
-  QtAbstractOpenGLBox *target = NULL;
   if(panelIndex == 3)
     {
-    target = ui->panel3D->Get3DView();
+    auto *target = ui->panel3D->Get3DView();
+    target->SaveScreenshot(to_utf8(fuser));
     }
   else
     {
     SliceViewPanel *svp = reinterpret_cast<SliceViewPanel *>(m_ViewPanels[panelIndex]);
-    target = svp->GetSliceView();
+    svp->GetSliceView()->SaveScreenshot(to_utf8(fuser));
     }
-
-  // Call the screenshot saving method, which will execute asynchronously
-  target->SaveScreenshot(to_utf8(fuser));
 
   // Store the last filename
   m_Model->SetLastScreenshotFileName(to_utf8(fuser));
@@ -1695,7 +1809,7 @@ void MainImageWindow::ExportScreenshotSeries(AnatomicalDirection direction)
 
   // Get the panel that's saving
   SliceViewPanel *svp = reinterpret_cast<SliceViewPanel *>(m_ViewPanels[iWindow]);
-  QtAbstractOpenGLBox *target = svp->GetSliceView();
+  QtVTKRenderWindowBox *target = svp->GetSliceView();
 
   // turn sync off temporarily
   bool sync_state = m_Model->GetSynchronizationModel()->GetSyncEnabled();
@@ -1805,11 +1919,11 @@ void MainImageWindow::on_actionVolumesAndStatistics_triggered()
   m_StatisticsDialog->Activate();
 }
 
-bool MainImageWindow::SaveSegmentation(bool interactive)
+bool MainImageWindow::SaveSegmentation(bool interactive, bool currentTPOnly)
 {
   return SaveImageLayer(
         m_Model, m_Model->GetDriver()->GetSelectedSegmentationLayer(),
-        LABEL_ROLE, interactive, this);
+        LABEL_ROLE, interactive, this, currentTPOnly);
 }
 
 void MainImageWindow::RaiseDialog(QDialog *dialog)
@@ -1830,6 +1944,11 @@ void MainImageWindow::on_actionSaveSegmentation_triggered()
 void MainImageWindow::on_actionSaveSegmentationAs_triggered()
 {
   SaveSegmentation(true);
+}
+
+void MainImageWindow::on_actionSaveTimePointSegmentation_triggered()
+{
+  SaveSegmentation(true, true);
 }
 
 
@@ -2109,14 +2228,14 @@ void MainImageWindow::on_actionToggle_Crosshair_triggered()
   // Toggle the crosshair visibility
   OpenGLAppearanceElement *elt = m_Model->GetAppearanceSettings()->GetUIElement(
         SNAPAppearanceSettings::CROSSHAIRS);
-  elt->SetVisible(!elt->GetVisible());
+  elt->SetVisibilityFlag(!elt->GetVisibilityFlag());
 }
 
 void MainImageWindow::on_actionAnnotation_Preferences_triggered()
 {
   // Show the preferences dialog
   m_PreferencesDialog->ShowDialog();
-  m_PreferencesDialog->GoToAppearancePage();
+  m_PreferencesDialog->GoToPage(PreferencesDialog::Appearance);
 }
 
 void MainImageWindow::on_actionAutoContrastGlobal_triggered()
@@ -2200,6 +2319,31 @@ void MainImageWindow::UpdateAutoCheck()
     {
     DoUpdateCheck(true);
     }
+}
+
+void MainImageWindow::Update4DReplay()
+{
+  bool isReplayOn = GetModel()->GetGlobalState()->Get4DReplay();
+  int interval = GetModel()->GetGlobalState()->Get4DReplayInterval();
+
+  if (interval != m_Crnt4DReplayInteval)
+    {
+    m_Crnt4DReplayInteval = interval;
+    m_4DReplayTimer->setInterval(interval);
+    }
+
+  if (isReplayOn)
+    this->m_4DReplayTimer->start();
+  else
+    this->m_4DReplayTimer->stop();
+}
+
+void MainImageWindow::RemindLayoutPreference()
+{
+  LayoutReminderDialog *layoutReminder = new LayoutReminderDialog(this);
+
+  layoutReminder->Initialize(this->m_Model);
+  layoutReminder->ConditionalExec();
 }
 
 void MainImageWindow::on_actionCheck_for_Updates_triggered()
@@ -2301,6 +2445,11 @@ void MainImageWindow::on_actionActivatePreviousLayer_triggered()
 void MainImageWindow::on_actionInterpolate_Labels_triggered()
 {
   RaiseDialog(m_InterpolateLabelsDialog);
+}
+
+// issue #24: Add label smoothing feature
+void MainImageWindow::on_actionSmooth_Labels_triggered() {
+  RaiseDialog(m_SmoothLabelsDialog);
 }
 
 void MainImageWindow::on_actionRegistration_triggered()
@@ -2410,3 +2559,38 @@ void MainImageWindow::on_actionNext_Display_Layout_triggered()
   lo = (DisplayLayoutModel::ViewPanelLayout)((lo + 1) % 5);
   m_Model->GetDisplayLayoutModel()->SetViewPanelLayout(lo);
 }
+
+#include <LayerTableRowModel.h>
+void MainImageWindow::on_actionToggle_Volume_Rendering_triggered()
+{
+  // Iterate over the layers for each class of displayed layers
+  LayerIterator it = m_Model->GetDriver()->GetCurrentImageData()->GetLayers(
+        MAIN_ROLE | OVERLAY_ROLE | SNAP_ROLE | LABEL_ROLE);
+
+  for(; !it.IsAtEnd(); ++it)
+    {
+    // Check if a model exists for this layer
+		SmartPtr<ImageLayerTableRowModel> model =
+				dynamic_cast<ImageLayerTableRowModel *>(
+          it.GetLayer()->GetUserData("LayerTableRowModel"));
+
+    // If not, create it and stick as 'user data' into the layer
+    if(model)
+      {
+      if(model->GetLayer()->GetUniqueId() == m_Model->GetGlobalState()->GetSelectedLayerId())
+        model->SetVolumeRenderingEnabled(!model->GetVolumeRenderingEnabled());
+      else
+        model->SetVolumeRenderingEnabled(false);
+      }
+    }
+}
+
+void MainImageWindow::on_actionToggle_4D_Replay_triggered()
+{
+  if (!m_Model->CheckState(UIF_IS_4D))
+    return;
+
+  GetModel()->GetGlobalState()->Toggle4DReplay();
+  Update4DReplay();
+}
+

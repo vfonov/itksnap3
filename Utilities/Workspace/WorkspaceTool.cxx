@@ -75,13 +75,14 @@ void sleep(int n_sec)
 
 int usage(int rc) 
 {
-  cout << "itksnap_ws : ITK-SNAP Workspace Tool" << endl;
+  cout << "itksnap-wt : ITK-SNAP Workspace Tool" << endl;
   cout << "Usage: " << endl;
-  cout << "  itksnap_ws [commands]" << endl;
+  cout << "  itksnap-wt [commands]" << endl;
   cout << "I/O commands: " << endl;
   cout << "  -i <workspace>                    : Read workspace file" << endl;
   cout << "  -o <workspace>                    : Write workspace file (without touching external images)" << endl;
   cout << "  -a <dest_dir>                     : Package workspace into uploadable archive in dest_dir" << endl;
+  cout << "  -A <dest_dir>                     : Package workspace preserving filenames" << endl;
   cout << "  -p <prefix>                       : Set the output prefix for the next command only" << endl;
   cout << "  -P                                : No printing of prefix for output commands" << endl;
   cout << "Informational commands: " << endl;
@@ -110,6 +111,12 @@ int usage(int rc)
   cout << "  -props-set-transform <file>       : Set the transform relative to main image" << endl;
   cout << "  -props-registry-get <key>         : Gets a registry key relative to picked layer" << endl;
   cout << "  -props-registry-set <key> <value> : Sets a registry key relative to picked layer" << endl;
+  cout << "  -props-registry-dump <key> <file> : Dump registry folder relative to picked layer" << endl;
+  cout << "  -props-registry-load <key> <file> : Load registry folder relative to picked layer" << endl;
+  cout << "Commands for selecting image time point properties: " << endl;
+  cout << "  -timepoints-list                  : List all time points in the workspace" << endl;
+  cout << "  -timepoints-pick-by-tag <tag>     : Pick time point associated with a specific tag" << endl;
+  cout << "  -timepoints-pick-by-name <name>   : Pick a time point with a specific nickname" << endl;
   cout << "Tag assignment commands (apply to picked layer/object): " << endl;
   cout << "  -tags-add <tag>                   : Add a tag to the picked object" << endl;
   cout << "  -tags-add-excl <tag>              : Add a tag that is exclusive to the object" << endl;
@@ -265,6 +272,7 @@ void simple_rest_post(const char *url, const char *params, const char *exception
   RESTClient rc;
 
   // Try calling command
+  std::cout << "prefix: " << prefix << std::endl;
   try {
     if(!rc.PostVA(url, params, args))
       throw IRISException("%s: %s", exception_message, rc.GetResponseText());
@@ -402,6 +410,12 @@ int main(int argc, char *argv[])
         ws.ExportWorkspace(cl.read_output_filename().c_str());
         }
 
+      else if(arg == "-A")
+        {
+        // Create an archive
+        ws.ExportWorkspace(cl.read_output_filename().c_str(), nullptr, false);
+        }
+
       // Prefix
       else if(arg == "-p" || arg == "-prefix")
         {
@@ -532,6 +546,28 @@ int main(int argc, char *argv[])
         cout << "INFO: set registry entry '" << key << "' to '" << ws.GetRegistry().Folder(layer_folder)[key][""] << "'" << endl;
         }
 
+      else if(arg == "-props-registry-dump" || arg == "-prd")
+        {
+        if(!ws.IsKeyValidLayer(layer_folder))
+          throw IRISException("Selected object %s is not a valid layer", layer_folder.c_str());
+
+        string key = cl.read_string();
+        string out_file = cl.read_output_filename();
+        Registry &folder_to_dump = ws.GetRegistry().Folder(layer_folder).Folder(key);
+        folder_to_dump.WriteToFile(out_file.c_str());
+        }
+
+      else if(arg == "-props-registry-load" || arg == "-prl")
+        {
+        if(!ws.IsKeyValidLayer(layer_folder))
+          throw IRISException("Selected object %s is not a valid layer", layer_folder.c_str());
+
+        string key = cl.read_string();
+        string in_file = cl.read_existing_filename();
+        Registry &folder_to_dump = ws.GetRegistry().Folder(layer_folder).Folder(key);
+        folder_to_dump.ReadFromFile(in_file.c_str());
+        }
+
       else if(arg == "-props-rename-file" || arg == "-prf")
         {
         string new_filename = cl.read_output_filename();
@@ -635,6 +671,43 @@ int main(int argc, char *argv[])
 
         // Store the mode in the folder
         ws.SetLayerMultiComponentDisplay(layer_folder, mcd);
+        }
+
+      else if(arg == "-timepoints-pick-by-tag")
+        {
+        string tag = cl.read_string();
+        // Find all the time points have the tag
+        std::list<unsigned int> found = ws.FindTimePointByTag(tag);
+
+        // Generate a comma separated list
+        std::ostringstream oss;
+        auto cit = found.cbegin();
+
+        if (cit != found.cend())
+          oss << *cit++;
+
+        while (cit != found.cend())
+          oss << "," << *cit++;
+
+        cout << prefix << oss.str() << endl;
+        }
+
+      else if(arg == "-timepoints-pick-by-name")
+        {
+        string name = cl.read_string();
+        std::list<unsigned int> found = ws.FindTimePointByName(name);
+
+        if(found.size() != 1)
+           throw IRISException("No unique time point found, nickname %s is associated with %d time points", name.c_str(), found.size());
+
+        unsigned int tp = found.front();
+
+        cout << prefix << tp << endl;
+        }
+
+      else if(arg == "-timepoints-list")
+        {
+        ws.PrintTimePointList(cout, prefix);
         }
 
       else if(arg == "-labels-set")

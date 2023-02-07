@@ -3,6 +3,7 @@
 
 #include "ImageWrapperBase.h"
 #include "LayerTableRowModel.h"
+#include "StandaloneMeshWrapper.h"
 #include "SNAPQtCommon.h"
 #include "QtAbstractButtonCoupling.h"
 #include "QtLabelCoupling.h"
@@ -13,6 +14,7 @@
 #include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
 #include <QFile>
+#include <QGuiApplication>
 #include <QMenu>
 #include <QContextMenuEvent>
 #include <QWidgetAction>
@@ -22,6 +24,7 @@
 #include "ImageIODelegates.h"
 #include "ImageIOWizard.h"
 #include "MainImageWindow.h"
+#include "MeshExportWizard.h"
 #include "SaveModifiedLayersDialog.h"
 
 #include "DisplayMappingPolicy.h"
@@ -29,7 +32,6 @@
 #include "ColorMapModel.h"
 
 class QAction;
-
 
 
 OpacitySliderAction::OpacitySliderAction(QWidget *parent)
@@ -55,11 +57,6 @@ QWidget *OpacitySliderAction::createWidget(QWidget *parent)
 }
 
 
-
-
-
-
-
 QString LayerInspectorRowDelegate::m_SliderStyleSheetTemplate;
 
 LayerInspectorRowDelegate::LayerInspectorRowDelegate(QWidget *parent) :
@@ -70,6 +67,7 @@ LayerInspectorRowDelegate::LayerInspectorRowDelegate(QWidget *parent) :
 
   // Confirugre the popup menu
   m_PopupMenu = new QMenu(this);
+  m_PopupMenu->setObjectName("menuPopup");
   m_PopupMenu->setStyleSheet("font-size:11px;");
 
   // Add the save/close actions
@@ -103,9 +101,17 @@ LayerInspectorRowDelegate::LayerInspectorRowDelegate(QWidget *parent) :
   // Create a menu listing the loaded overlays
   m_OverlaysMenu = m_PopupMenu->addMenu("Overlays");
 
+  // Create a volume rendering menu
+  m_VolumeRenderingMenu = m_PopupMenu->addMenu("Volume Rendering");
+  m_VolumeRenderingMenu->setObjectName("menuVolRen");
+  m_VolumeRenderingMenu->addAction(ui->actionVolumeEnable);
+  ui->actionVolumeEnable->setObjectName("actionVolumeEnable");
+  m_PopupMenu->addSeparator();
+
   // Placeholder for image processing commands
   m_PopupMenu->addSeparator();
   QMenu *processMenu = m_PopupMenu->addMenu("Image Processing");
+  processMenu->setObjectName("menuProcess");
   processMenu->addAction(ui->actionTextureFeatures);
 
   // set up an event filter
@@ -134,38 +140,49 @@ LayerInspectorRowDelegate::~LayerInspectorRowDelegate()
   delete ui;
 }
 
-void LayerInspectorRowDelegate::SetModel(LayerTableRowModel *model)
+void LayerInspectorRowDelegate::SetModel(AbstractLayerTableRowModel *model)
 {
   m_Model = model;
 
   makeCoupling(ui->inLayerOpacity, model->GetLayerOpacityModel());
   makeCoupling(ui->outLayerNickname, model->GetNicknameModel());
-  makeCoupling(ui->outComponent, model->GetComponentNameModel());
+
   makeCoupling(m_OverlayOpacitySlider, model->GetLayerOpacityModel());
   makeCoupling((QAbstractButton *) ui->btnVisible, model->GetVisibilityToggleModel());
   makeCoupling((QAbstractButton *) ui->btnSticky, model->GetStickyModel());
 
+  if (!model->CheckState(AbstractLayerTableRowModel::UIF_MESH))
+    {
+    auto image_model = dynamic_cast<ImageLayerTableRowModel*>(model);
+    makeCoupling(ui->outComponent, image_model->GetComponentNameModel());
+    makeCoupling(ui->actionVolumeEnable, image_model->GetVolumeRenderingEnabledModel());
+    }
+
+
   const QtWidgetActivator::Options opt_hide = QtWidgetActivator::HideInactive;
-  activateOnFlag(ui->actionUnpin_layer, model, LayerTableRowModel::UIF_UNPINNABLE, opt_hide);
-  activateOnFlag(ui->actionPin_layer, model, LayerTableRowModel::UIF_PINNABLE, opt_hide);
-  activateOnAnyFlags(ui->btnSticky, model, LayerTableRowModel::UIF_UNPINNABLE, LayerTableRowModel::UIF_PINNABLE, opt_hide);
-  activateOnFlag(m_OverlayOpacitySliderAction, model, LayerTableRowModel::UIF_OPACITY_EDITABLE, opt_hide);
-  activateOnFlag(m_ColorMapMenu, model, LayerTableRowModel::UIF_COLORMAP_ADJUSTABLE, opt_hide);
-  activateOnFlag(m_DisplayModeMenu, model, LayerTableRowModel::UIF_MULTICOMPONENT, opt_hide);
-  activateOnFlag(ui->outComponent, model, LayerTableRowModel::UIF_MULTICOMPONENT, opt_hide);
+  activateOnFlag(ui->actionUnpin_layer, model, AbstractLayerTableRowModel::UIF_UNPINNABLE, opt_hide);
+  activateOnFlag(ui->actionPin_layer, model, AbstractLayerTableRowModel::UIF_PINNABLE, opt_hide);
+  activateOnAnyFlags(ui->btnSticky, model, AbstractLayerTableRowModel::UIF_UNPINNABLE, AbstractLayerTableRowModel::UIF_PINNABLE, opt_hide);
+  activateOnFlag(m_OverlayOpacitySliderAction, model, AbstractLayerTableRowModel::UIF_OPACITY_EDITABLE, opt_hide);
+  activateOnFlag(m_ColorMapMenu, model, AbstractLayerTableRowModel::UIF_COLORMAP_ADJUSTABLE, opt_hide);
+  activateOnFlag(m_DisplayModeMenu, model, AbstractLayerTableRowModel::UIF_MULTICOMPONENT, opt_hide);
+  activateOnFlag(ui->outComponent, model, AbstractLayerTableRowModel::UIF_MULTICOMPONENT, opt_hide);
 
   // makeActionVisibilityCoupling(ui->actionUnpin_layer, model->GetStickyModel());
   // makeActionVisibilityCoupling(ui->actionPin_layer, model->GetStickyModel(), true);
   // makeActionVisibilityCoupling(m_OverlayOpacitySliderAction, model->GetStickyModel());
 
   // Hook up some activations
-  activateOnFlag(ui->btnVisible, model, LayerTableRowModel::UIF_OPACITY_EDITABLE, opt_hide);
-  activateOnFlag(ui->inLayerOpacity, model, LayerTableRowModel::UIF_OPACITY_EDITABLE, opt_hide);
-  // activateOnFlag(ui->btnMoveUp, model, LayerTableRowModel::UIF_MOVABLE_UP);
-  // activateOnFlag(ui->btnMoveDown, model, LayerTableRowModel::UIF_MOVABLE_DOWN);
-  activateOnFlag(ui->actionClose, model, LayerTableRowModel::UIF_CLOSABLE);
-  activateOnFlag(ui->actionAutoContrast, model, LayerTableRowModel::UIF_CONTRAST_ADJUSTABLE);
-
+  activateOnFlag(ui->btnVisible, model, AbstractLayerTableRowModel::UIF_OPACITY_EDITABLE, opt_hide);
+  activateOnFlag(ui->inLayerOpacity, model, AbstractLayerTableRowModel::UIF_OPACITY_EDITABLE, opt_hide);
+  // activateOnFlag(ui->btnMoveUp, model, AbstractLayerTableRowModel::UIF_MOVABLE_UP);
+  // activateOnFlag(ui->btnMoveDown, model, AbstractLayerTableRowModel::UIF_MOVABLE_DOWN);
+  activateOnFlag(ui->actionClose, model, AbstractLayerTableRowModel::UIF_CLOSABLE);
+  activateOnFlag(ui->actionSave, model, AbstractLayerTableRowModel::UIF_SAVABLE);
+  activateOnFlag(ui->actionAutoContrast, model, AbstractLayerTableRowModel::UIF_CONTRAST_ADJUSTABLE);
+  activateOnFlag(m_VolumeRenderingMenu, model, AbstractLayerTableRowModel::UIF_VOLUME_RENDERABLE, opt_hide);
+  activateOnFlag(m_PopupMenu->findChild<QMenu*>("menuProcess"), model, AbstractLayerTableRowModel::UIF_IMAGE, opt_hide);
+  activateOnFlag(m_OverlaysMenu, model, AbstractLayerTableRowModel::UIF_IMAGE, opt_hide);
 
   // Hook up the colormap and the slider's style sheet
   connectITK(m_Model->GetLayer(), WrapperChangeEvent());
@@ -202,7 +219,7 @@ void LayerInspectorRowDelegate::SetModel(LayerTableRowModel *model)
   this->UpdateTextFont();
 }
 
-ImageWrapperBase *LayerInspectorRowDelegate::GetLayer() const
+WrapperBase *LayerInspectorRowDelegate::GetLayer() const
 {
   // No model? No layer.
   if(!m_Model)
@@ -216,33 +233,40 @@ ImageWrapperBase *LayerInspectorRowDelegate::GetLayer() const
 
 void LayerInspectorRowDelegate::UpdateBackgroundPalette()
 {
-  // Set up a pallete for the background
-  QPalette palette;
-  QLinearGradient linearGradient(QPointF(0, 0), QPointF(0, this->height()));
+  // The color scheme
+  QColor scheme_light[] = {
+    QColor(180,180,215), QColor(190,190,225), QColor(225,225,235), QColor(235,235,235)
+  };
 
+  QColor scheme_dark[] = {
+    QColor(115,115,160), QColor(105,105,150), QColor(70,70,70), QColor(60,60,60)
+  };
+
+  // Get the current palette
+  QPalette palette = QGuiApplication::palette();
+
+  // Determine if the window color is dark or bright
+  bool dark_scheme = palette.color(QPalette::Window).valueF() < 0.5;
+  QColor* scheme = dark_scheme ? scheme_dark : scheme_light;
+
+  // Set the first color in the gradient
+  QColor stop_1, stop_2;
   if(m_Selected && m_Hover)
-    {
-    linearGradient.setColorAt(0, QColor(180,180,215));
-    linearGradient.setColorAt(1, QColor(200,200,235));
-    }
+    stop_1 = scheme[0];
   else if(m_Selected)
-    {
-    linearGradient.setColorAt(0, QColor(190,190,225));
-    linearGradient.setColorAt(1, QColor(210,210,245));
-    }
+    stop_1 = scheme[1];
   else if(m_Hover)
-    {
-    linearGradient.setColorAt(0, QColor(225,225,235));
-    linearGradient.setColorAt(1, QColor(245,245,255));
-    }
+    stop_1 = scheme[2];
   else
-    {
-    linearGradient.setColorAt(0, QColor(235,235,235));
-    linearGradient.setColorAt(1, QColor(255,255,255));
-    }
+    stop_1 = scheme[3];
 
-  QBrush brush(linearGradient);
-  palette.setBrush(QPalette::Window, brush);
+  // Set the second color as the offset
+  stop_2 = dark_scheme ? stop_1.lighter(120) : stop_1.lighter(120);
+  QLinearGradient linearGradient(QPointF(0, 0), QPointF(0, this->height()));
+  linearGradient.setColorAt(0, stop_1);
+  linearGradient.setColorAt(1, stop_2);
+
+  palette.setBrush(QPalette::Window, QBrush(linearGradient));
   ui->frame->setPalette(palette);
 }
 
@@ -264,13 +288,17 @@ void LayerInspectorRowDelegate::UpdateTextFont()
 
 void LayerInspectorRowDelegate::setSelected(bool value)
 {
+  auto mesh_model = dynamic_cast<MeshLayerTableRowModel*>(m_Model.GetPointer());
+
   if(m_Selected != value)
     {
     m_Selected = value;
-    emit selectionChanged(value);
 
     // Update selection in the model
     m_Model->SetActivated(value);
+
+    // Notify other delegates to change
+    emit selectionChanged(value);
 
     // Update the look and feel
     this->UpdateBackgroundPalette();
@@ -278,6 +306,15 @@ void LayerInspectorRowDelegate::setSelected(bool value)
 
     // Update!
     this->update();
+    }
+  else if (mesh_model)
+    {
+    // Remove bold label from mesh that is no longer active
+    // -- this happens when a mesh row is "activated" but not "selected" by
+    // -- selection of a related image layer. And then if another mesh layer
+    // -- is selected, we need this logic to "de-activate" current layer,
+    // -- because "m_Selected" is still false and the argument "value" is false
+    this->UpdateTextFont();
     }
 
 }
@@ -297,7 +334,7 @@ QMenu *LayerInspectorRowDelegate::contextMenu() const
   return this->m_PopupMenu;
 }
 
-void LayerInspectorRowDelegate::enterEvent(QEvent *)
+void LayerInspectorRowDelegate::enterEvent(QEnterEvent *)
 {
   m_Hover = true;
   this->UpdateBackgroundPalette();
@@ -409,6 +446,12 @@ void LayerInspectorRowDelegate::UpdateComponentMenu()
   if(m_DisplayModeActionGroup)
     delete m_DisplayModeActionGroup;
 
+  // No action taken for mesh layers
+  if (m_Model->CheckState(AbstractLayerTableRowModel::UIF_MESH))
+    return;
+
+  auto image_model = dynamic_cast<ImageLayerTableRowModel*>(m_Model.GetPointer());
+
   // Create a map from display modes to actions
   std::map<MultiChannelDisplayMode, QAction *> actionMap;
 
@@ -416,10 +459,10 @@ void LayerInspectorRowDelegate::UpdateComponentMenu()
   m_DisplayModeActionGroup = new QActionGroup(this);
 
   // Get the list of all available display modes from the model
-  const LayerTableRowModel::DisplayModeList &modes = m_Model->GetAvailableDisplayModes();
+  auto &modes = image_model->GetAvailableDisplayModes();
 
   // Create the actions for the display modes
-  LayerTableRowModel::DisplayModeList::const_iterator it;
+  ImageLayerTableRowModel::DisplayModeList::const_iterator it;
   for(it = modes.begin(); it != modes.end(); it++)
     {
     MultiChannelDisplayMode mode = *it;
@@ -430,7 +473,7 @@ void LayerInspectorRowDelegate::UpdateComponentMenu()
 
     // Create an action
     QAction *action = m_DisplayModeMenu->addAction(
-          from_utf8(m_Model->GetDisplayModeString(mode)));
+          from_utf8(image_model->GetDisplayModeString(mode)));
 
     action->setCheckable(true);
 
@@ -441,7 +484,7 @@ void LayerInspectorRowDelegate::UpdateComponentMenu()
 
   // Hook up with the ctions
   makeActionGroupCoupling(m_DisplayModeActionGroup, actionMap,
-                          m_Model->GetDisplayModeModel());
+                          image_model->GetDisplayModeModel());
 }
 
 #include "GenericImageData.h"
@@ -454,8 +497,17 @@ void LayerInspectorRowDelegate::UpdateOverlaysMenu()
   // Clear the overlays menu
   m_OverlaysMenu->clear();
 
+  // Do nothing for mesh layer
+  if (m_Model->CheckState(AbstractLayerTableRowModel::UIF_MESH))
+    return;
+
+  auto image_layer = dynamic_cast<ImageWrapperBase*>(m_Model->GetLayer());
+
+  if (!image_layer)
+    return;
+
   // If the current layer is sticky, disable the menu
-  if(m_Model->GetLayer() && !m_Model->GetLayer()->IsSticky())
+  if(m_Model->GetLayer() && !image_layer->IsSticky())
     {
     // Get the current image data
     GenericImageData *gid = m_Model->GetParentModel()->GetDriver()->GetCurrentImageData();
@@ -484,11 +536,14 @@ void LayerInspectorRowDelegate::UpdateOverlaysMenu()
 
 void LayerInspectorRowDelegate::OnNicknameUpdate()
 {
+  const char *layer_type =
+      (dynamic_cast<MeshLayerTableRowModel*>(m_Model.GetPointer())) ? "mesh" : "image";
+
   // Update things that depend on the nickname
   QString name = from_utf8(m_Model->GetNickname());
-  ui->actionSave->setText(QString("Save image \"%1\" ...").arg(name));
+  ui->actionSave->setText(QString("Save %1 \"%2\" ...").arg(layer_type).arg(name));
   ui->actionSave->setToolTip(ui->actionSave->text());
-  ui->actionClose->setText(QString("Close image \"%1\"").arg(name));
+  ui->actionClose->setText(QString("Close %1 \"%2\"").arg(layer_type).arg(name));
   ui->actionClose->setToolTip(ui->actionClose->text());
   ui->outLayerNickname->setToolTip(name);
 
@@ -542,7 +597,7 @@ void LayerInspectorRowDelegate::ApplyColorMap()
   if(cm)
     {
     QStringList stops;
-    for(int i = 0; i < cm->GetNumberOfCMPoints(); i++)
+    for(size_t i = 0; i < cm->GetNumberOfCMPoints(); i++)
       {
       ColorMap::CMPoint cmp = cm->GetCMPoint(i);
       for(int side = 0; side < 2; side++)
@@ -588,8 +643,24 @@ void LayerInspectorRowDelegate::on_btnMoveDown_pressed()
 
 void LayerInspectorRowDelegate::on_actionSave_triggered()
 {
+  auto mesh_model = dynamic_cast<MeshLayerTableRowModel*>(m_Model.GetPointer());
+  if (mesh_model)
+    {
+    if (mesh_model->CheckState(AbstractLayerTableRowModel::UIF_SAVABLE))
+      {
+      MeshExportWizard wizard(this);
+      wizard.SetModel(m_Model->GetParentModel()->GetMeshExportModel());
+      wizard.exec();
+      }
+    return;
+    }
+
+  auto image_model = dynamic_cast<ImageLayerTableRowModel*>(m_Model.GetPointer());
+  if (!image_model)
+    return;
+
   // Create a model for IO
-  SmartPtr<ImageIOWizardModel> model = m_Model->CreateIOWizardModelForSave();
+  SmartPtr<ImageIOWizardModel> model = image_model->CreateIOWizardModelForSave();
 
   // Interactive
   ImageIOWizard wiz(this);
@@ -599,14 +670,30 @@ void LayerInspectorRowDelegate::on_actionSave_triggered()
 
 void LayerInspectorRowDelegate::on_actionClose_triggered()
 {
-  // Should we prompt for a single layer or all layers?
-  ImageWrapperBase *prompted_layer = m_Model->IsMainLayer() ? NULL : m_Model->GetLayer();
+  bool do_close = false;
 
-  // Prompt for changes
-  if(SaveModifiedLayersDialog::PromptForUnsavedChanges(m_Model->GetParentModel(), prompted_layer))
+  // Mesh specific logic
+  if (m_Model->CheckState(AbstractLayerTableRowModel::UIF_MESH))
     {
-    m_Model->CloseLayer();
+    do_close = true;
     }
+  else
+    {
+    // Should we prompt for a single layer or all layers?
+    ImageWrapperBase *prompted_layer = nullptr;
+
+    if (!m_Model->IsMainLayer())
+      prompted_layer = dynamic_cast<ImageWrapperBase*>(m_Model->GetLayer());
+
+    // Prompt for changes
+    if(SaveModifiedLayersDialog::PromptForUnsavedChanges(m_Model->GetParentModel(), prompted_layer))
+      {
+      do_close = true;
+      }
+    }
+
+  if (do_close)
+    m_Model->CloseLayer();
 }
 
 void LayerInspectorRowDelegate::onColorMapPresetSelected()
@@ -621,7 +708,14 @@ void LayerInspectorRowDelegate::on_actionAutoContrast_triggered()
 void LayerInspectorRowDelegate::on_actionTextureFeatures_triggered()
 {
   QtCursorOverride c(Qt::WaitCursor);
-  m_Model->GenerateTextureFeatures();
+
+  // Do nothing for mesh layer
+  if (m_Model->CheckState(AbstractLayerTableRowModel::UIF_MESH))
+    return;
+
+  auto image_model = dynamic_cast<ImageLayerTableRowModel*>(m_Model.GetPointer());
+  if (image_model)
+    image_model->GenerateTextureFeatures();
 }
 
 void LayerInspectorRowDelegate::on_actionPin_layer_triggered()

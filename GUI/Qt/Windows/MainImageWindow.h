@@ -53,6 +53,7 @@ class StatisticsDialog;
 class QActionGroup;
 class PreferencesDialog;
 class InterpolateLabelsDialog;
+class SmoothLabelsDialog;
 class ImageIOWizard;
 class ImageIOWizardModel;
 class DistributedSegmentationDialog;
@@ -122,9 +123,12 @@ public:
   /** Check for updates (automatically at regular periods) */
   void UpdateAutoCheck();
 
+  /** Remind user of layout preference setting */
+  void RemindLayoutPreference();
+
   // Save the segmentation (interactively or not). Return true if save was
   // successful
-  bool SaveSegmentation(bool interactive);
+  bool SaveSegmentation(bool interactive, bool currentTPOnly = false);
 
   /** Save the project (interactively or not) */
   bool SaveWorkspace(bool interactive);
@@ -184,6 +188,10 @@ private slots:
 
   void on_actionAdd_Overlay_triggered();
 
+  void on_actionAddMesh_triggered();
+
+  void on_actionAddMeshSeries_triggered();
+
   void on_actionSSAxial_triggered();
 
   void on_actionSSCoronal_triggered();
@@ -205,6 +213,8 @@ private slots:
   void on_actionSaveSegmentation_triggered();
 
   void on_actionSaveSegmentationAs_triggered();
+
+  void on_actionSaveTimePointSegmentation_triggered();
 
 
   void on_actionOverlayVisibilityToggleAll_triggered();
@@ -250,6 +260,8 @@ private slots:
   void UpdateCanvasDimensions();
 
   void onAnimationTimeout();
+
+  void on4DReplayTimeout();
 
   void on_actionExportAxial_triggered();
 
@@ -303,6 +315,8 @@ private slots:
 
   void on_actionInterpolate_Labels_triggered();
 
+  void on_actionSmooth_Labels_triggered();
+
   void on_actionRegistration_triggered();
 
   void on_actionClose_Window_triggered();
@@ -326,6 +340,10 @@ private slots:
   void on_actionDSS_triggered();
 
   void on_actionNext_Display_Layout_triggered();
+
+  void on_actionToggle_Volume_Rendering_triggered();
+
+  void on_actionToggle_4D_Replay_triggered();
 
 protected:
 
@@ -362,6 +380,9 @@ private:
 
   // Common method for loading recent segmentations (either open or add)
   void LoadRecentSegmentation(QString file, bool additive);
+
+  // Update 4D Replay Timer and Interval
+  void Update4DReplay();
 
   // For convenience, an array of the four panels (3 slice/1 3D)
   QWidget *m_ViewPanels[4];
@@ -410,9 +431,15 @@ private:
 
   InterpolateLabelsDialog *m_InterpolateLabelsDialog;
 
+  SmoothLabelsDialog *m_SmoothLabelsDialog;
+
   RegistrationDialog *m_RegistrationDialog;
 
   DistributedSegmentationDialog *m_DSSDialog;
+
+  QTimer *m_4DReplayTimer;
+  bool m_Is4DReplayOn = false;
+  int m_Crnt4DReplayInteval = 50;
 
   // A timer used to animate components
   QTimer *m_AnimateTimer;

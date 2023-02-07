@@ -267,6 +267,117 @@ std::list<std::string> WorkspaceAPI::FindLayersByTag(const string &tag)
   return matches;
 }
 
+std::list<unsigned int> WorkspaceAPI::FindTimePointByTag(const string &tag)
+{
+  // Iterate over all the timepoints stored in the workspace
+  std::list<unsigned int> matches;
+
+  if (!this->m_Registry.HasFolder("TimePointProperties.TimePoints"))
+    {
+      cout << "[WorkspaceAPI] workspace does not have time point properties folder" << endl;
+      return matches;
+    }
+
+  Registry regTPP = this->m_Registry.Folder("TimePointProperties.TimePoints");
+  unsigned int nt = regTPP["ArraySize"][0u];
+
+  // Load all of the time points in the current project
+  for(auto i = 1u; i <= nt; i++)
+    {
+    // Get the key of the time point
+    string key = Registry::Key("TimePoint[%d]", i);
+
+    Registry &f = regTPP.Folder(key);
+
+    // Get the tags in this time point
+    StringSet tags = WorkspaceAPI::GetTags(f);
+    if(tags.find(tag) != tags.end())
+      {
+      matches.push_back(i);
+      }
+    }
+
+  return matches;
+}
+
+std::list<unsigned int> WorkspaceAPI::FindTimePointByName(const string &name)
+{
+  // Iterate over all the timepoints stored in the workspace
+  std::list<unsigned int> matches;
+
+  if (!this->m_Registry.HasFolder("TimePointProperties.TimePoints"))
+    {
+      cout << "[WorkspaceAPI] workspace does not have time point properties folder" << endl;
+      return matches;
+    }
+
+  Registry regTPP = this->m_Registry.Folder("TimePointProperties.TimePoints");
+  unsigned int nt = regTPP["ArraySize"][0u];
+
+  // Load all of the time points in the current project
+  for(auto i = 1u; i <= nt; i++)
+    {
+    // Get the key of the time point
+    string key = Registry::Key("TimePoint[%d]", i);
+
+    Registry &f = regTPP.Folder(key);
+
+    // Get the tags in this time point
+    string nickname = f["Nickname"][""];
+    if(nickname.compare(name) == 0)
+      {
+      matches.push_back(i);
+      }
+    }
+
+  return matches;
+}
+
+void WorkspaceAPI::PrintTimePointList(std::ostream &os, const string &line_prefix)
+{
+  // Iterate over all the layers stored in the workspace
+  if (!this->m_Registry.HasFolder("TimePointProperties.TimePoints"))
+    {
+      cout << "[WorkspaceAPI] workspace does not have time point properties folder" << endl;
+      return;
+    }
+
+  Registry regTPP = this->m_Registry.Folder("TimePointProperties.TimePoints");
+  unsigned int nt = regTPP["ArraySize"][0u];
+
+  // Use a formatted table
+  FormattedTable table(3);
+
+  // Print the header information
+  table << "TimePoint" << "Nickname" << "Tags";
+
+  // Load all of the time points in the current project
+  for(auto i = 1u; i <= nt; i++)
+    {
+    // Get the key of the time point
+    string key = Registry::Key("TimePoint[%d]", i);
+
+    Registry &f = regTPP.Folder(key);
+
+    // Get the role
+    string nickname = f["Nickname"][""];
+
+    // Use the %03d formatting for layer numbers, to match that in the registry
+    char ifmt[16];
+    sprintf(ifmt, "%03d", i);
+
+    // Print the layer information
+    table
+        << i
+        << f["Nickname"][""]
+        << f["Tags"][""];
+    }
+
+  table.Print(os, line_prefix);
+}
+
+
+
 void WorkspaceAPI::ListLayerFilesForTag(const string &tag, ostream &sout, const string &prefix)
 {
   // Iterate over all the layers stored in the workspace
@@ -484,7 +595,7 @@ void WorkspaceAPI::UpdateMainLayerFieldsFromImage(Registry &main_layer_folder)
   // TODO: there has to be a way to supply some hints!
   SmartPtr<GuidedNativeImageIO> io = GuidedNativeImageIO::New();
   Registry hints;
-  io->ReadNativeImageHeader(filename.c_str(), hints);
+	io->ReadNativeImageHeader(filename.c_str(), hints);
   Vector3i dims(0);
   for(int k = 0; k < io->GetIOBase()->GetNumberOfDimensions(); k++)
     dims[k] = io->GetIOBase()->GetDimensions(k);
@@ -735,12 +846,12 @@ string WorkspaceAPI::GetTempDirName()
   char tempFile[_MAX_PATH + 1] = "";
 
   // First call return a directory only
-  DWORD length = GetTempPath(_MAX_PATH+1, tempDir);
+  DWORD length = GetTempPathA(_MAX_PATH+1, tempDir);
   if(length <= 0 || length > _MAX_PATH)
     throw IRISException("Unable to create temporary directory");
 
   // This will create a unique file in the temp directory
-  if (0 == GetTempFileName(tempDir, TEXT("alfabis"), 0, tempFile))
+  if (0 == GetTempFileNameA(tempDir, "alfabis", 0, tempFile))
     throw IRISException("Unable to create temporary directory");
 
   // We use the filename to create a directory
@@ -759,7 +870,9 @@ string WorkspaceAPI::GetTempDirName()
 
 #include "AllPurposeProgressAccumulator.h"
 
-void WorkspaceAPI::ExportWorkspace(const char *new_workspace, CommandType *cmd_progress) const
+void WorkspaceAPI::ExportWorkspace(const char *new_workspace,
+                                   CommandType *cmd_progress,
+                                   bool scramble_filenames) const
 {
   // Create a progress tracker
   SmartPtr<TrivalProgressSource> progress = TrivalProgressSource::New();
@@ -773,8 +886,11 @@ void WorkspaceAPI::ExportWorkspace(const char *new_workspace, CommandType *cmd_p
   // Duplicate the workspace data
   WorkspaceAPI wsexp = (*this);
 
-  // Get the directory where the new workspace will go
-  string wsdir = SystemTools::GetParentDirectory(new_workspace);
+  // Convert to absolute path (because project will use absolute path)
+  string ws_file_full = SystemTools::CollapseFullPath(new_workspace);
+
+  // Get the directory in which the project will be saved
+  string wsdir = SystemTools::GetParentDirectory(ws_file_full.c_str());
 
   // Iterate over all the layers stored in the workspace
   int n_layers = wsexp.GetNumberOfLayers();
@@ -791,6 +907,9 @@ void WorkspaceAPI::ExportWorkspace(const char *new_workspace, CommandType *cmd_p
     // The the (possibly moved) absolute filename
     string fn_layer = wsexp.GetLayerActualPath(f_layer);
 
+    // Get the current layer base filename
+    string fn_layer_basename = SystemTools::GetFilenameWithoutExtension(fn_layer);
+
     // The IO hints for the file
     Registry io_hints, *layer_io_hints;
     if((layer_io_hints = wsexp.GetLayerIOHints(f_layer)))
@@ -806,11 +925,15 @@ void WorkspaceAPI::ExportWorkspace(const char *new_workspace, CommandType *cmd_p
     progress->AddProgress(0.5);
 
     // Compute the hash of the image data to generate filename
-    std::string image_md5 = io->GetNativeImageMD5Hash();
+    if(scramble_filenames)
+      {
+      // Use the hash as the basename
+      fn_layer_basename = io->GetNativeImageMD5Hash();
+      }
 
     // Create a filename that combines the layer index with the hash code
     char fn_layer_new[4096];
-    sprintf(fn_layer_new, "%s/layer_%03d_%s.nii.gz", wsdir.c_str(), i, image_md5.c_str());
+    sprintf(fn_layer_new, "%s/layer_%03d_%s.nii.gz", wsdir.c_str(), i, fn_layer_basename.c_str());
 
     // Save the layer there. Since we are saving as a NIFTI, we don't need to
     // provide any hints
